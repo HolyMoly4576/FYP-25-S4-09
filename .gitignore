@@ -1,0 +1,69 @@
+# Node
+node_modules/
+*.log
+.pnpm-store/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.python-version
+
+# Env
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+frontend/dist/
+frontend/build/
+backend/.mypy_cache/
+backend/.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+
+# Env
+.env
+backend/.env
+
+# Mac/Windows
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Dist/build
+frontend/dist/
+frontend/build/
+backend/.mypy_cache/
+backend/.pytest_cache/
+
+# Docker
+**/.docker-cache/
+
+
