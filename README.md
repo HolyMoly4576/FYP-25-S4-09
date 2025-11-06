@@ -36,21 +36,24 @@ cd <your-repo-folder>
 
 - Ensure Python 3.8+ is installed
 
-#### Create Virtual Environment
+#### - Create Virtual Environment
 
 python -m venv venv
+
 source venv/bin/activate # macOS/Linux
+
 venv\Scripts\activate # Windows
 
 
-#### Install Dependencies
+#### - Install Dependencies
 
-pip install -r requirements.txt (I think still empty arh)
+pip install -r requirements.txt 
 
 
-#### Run Backend Locally
+#### - Run Backend Locally
 
 cd app
+
 uvicorn main:app --reload
 
 *(Replace `main:app` with your actual FastAPI entrypoint)*
@@ -61,12 +64,13 @@ uvicorn main:app --reload
 
 - Ensure Node.js and npm are installed
 
-#### Install React Dependencies
+#### - Install React Dependencies
 
 cd frontend
+
 npm install
 
-#### Run Frontend Locally
+#### - Run Frontend Locally
 
 npm start dev
 
@@ -121,12 +125,6 @@ docker-compose down
 
 ## Contribution
 
-1. Fork and clone.
-2. Create a branch.
-3. Commit and raise a pull request.
-
----
-
-## License
-
-MIT License.
+1. Fork and clone
+2. Create a branch
+3. Commit and raise a pull request 
