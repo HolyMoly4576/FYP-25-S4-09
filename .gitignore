@@ -28,6 +28,33 @@ backend/.pytest_cache/
 .DS_Store
 Thumbs.db
 
+
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.python-version
+
+# Env
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+frontend/dist/
+frontend/build/
+backend/.mypy_cache/
+backend/.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Node
 node_modules/
 *.log
