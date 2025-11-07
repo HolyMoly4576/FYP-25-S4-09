@@ -1,123 +1,136 @@
-version: "3.9"
-
 services:
-  db:
-    image: postgres:16
-    container_name: fyp_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-fyp}
-      POSTGRES_USER: ${POSTGRES_USER:-fyp_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fyp_password}
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
-  backend:
+  postgres:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: fyp_backend
-    restart: unless-stopped
+      context: ./Database
+      dockerfile: Dockerfile
+    container_name: postgres_db
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://fyp_user:fyp_password@db:5432/fyp}
-    depends_on:
-      - db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: database
     ports:
-      - "8000:8000"
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - storage_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d database"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  storage_node_1:
+    build:
+      context: ./storage-node
+      dockerfile: Dockerfile
+    container_name: storage_node_1
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
+      NODE_ROLE: STORAGE
+      NODE_HOSTNAME: storage_node_1
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/storage_node_1
+      TOTAL_BYTES: 128589934592
+    ports:
+      - "8001:3000"
+    volumes:
+      - storage_node_1_data:/data/storage_node_1
+    networks:
+      - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  storage_node_2:
+    build:
+      context: ./storage-node
+      dockerfile: Dockerfile
+    container_name: storage_node_2
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
+      NODE_ROLE: STORAGE
+      NODE_HOSTNAME: storage_node_2
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/storage_node_2
+      TOTAL_BYTES: 128589934592
+    ports:
+      - "8002:3000"
+    volumes:
+      - storage_node_2_data:/data/storage_node_2
+    networks:
+      - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+  
+  storage_node_3:
+    build:
+      context: ./storage-node
+      dockerfile: Dockerfile
+    container_name: storage_node_3
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
+      NODE_ROLE: STORAGE
+      NODE_HOSTNAME: storage_node_3
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/storage_node_3
+      TOTAL_BYTES: 128589934592
+    ports:
+      - "8003:3000"
+    volumes:
+      - storage_node_3_data:/data/storage_node_3
+    networks:
+      - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+  
+  master_node:
+    build:
+      context: ./master-node
+      dockerfile: Dockerfile
+    container_name: master_node
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
+      NODE_ROLE: MASTER
+      NODE_HOSTNAME: master_node
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/master_node
+      TOTAL_BYTES: 128589934592
+    ports:
+      - "8000:3000"
+    volumes:
+      - master_node_data:/data/master_node
+    networks:
+      - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+  
+networks:
+  storage_network:
+    driver: bridge
 
 volumes:
-  db_data:
-
-version: "3.9"
-
-services:
-  db:
-    image: postgres:16
-    container_name: fyp_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-fyp}
-      POSTGRES_USER: ${POSTGRES_USER:-fyp_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fyp_password}
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: fyp_backend
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://fyp_user:fyp_password@db:5432/fyp}
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-  frontend:
-    build:
-      context: ./frontend
-    container_name: fyp_frontend
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-
-volumes:
-  db_data:
-
-version: "3.9"
-
-services:
-  db:
-    image: postgres:16
-    container_name: fyp_db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-fyp}
-      POSTGRES_USER: ${POSTGRES_USER:-fyp_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fyp_password}
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: fyp_backend
-    restart: unless-stopped
-    env_file:
-      - backend/.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://fyp_user:fyp_password@db:5432/fyp}
-    depends_on:
-      - db
-    ports:
-      - "8000:8000"
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-  frontend:
-    build:
-      context: ./frontend
-    container_name: fyp_frontend
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-    # Assumes a production build served by nginx or similar in Dockerfile
-
-volumes:
-  db_data:
-
-
+  postgres_data:
+  storage_node_1_data:
+  storage_node_2_data:
+  storage_node_3_data:
+  master_node_data:
