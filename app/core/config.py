@@ -11,7 +11,7 @@ class Settings:
 
 	database_url: str = os.getenv(
 		"DATABASE_URL",
-		"postgresql+psycopg2://fyp_user:fyp_password@localhost:5432/fyp",
+		"postgresql+psycopg2://user:password@localhost:5433/database",
 	)
 
 	backend_cors_origins: str = os.getenv("BACKEND_CORS_ORIGINS", "*")

@@ -3,12 +3,16 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+import traceback
+import logging
 
 from app.db.session import get_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.core.config import get_settings
 import uuid
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -57,34 +61,46 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 	Login endpoint. Accepts username/email and password.
 	Returns JWT access token on successful authentication.
 	"""
-	# Find account by username or email
-	account = get_account_by_username_or_email(db, login_data.username_or_email)
-	
-	if not account:
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Incorrect username/email or password",
+	try:
+		# Find account by username or email
+		account = get_account_by_username_or_email(db, login_data.username_or_email)
+		
+		if not account:
+			raise HTTPException(
+				status_code=status.HTTP_401_UNAUTHORIZED,
+				detail="Incorrect username/email or password",
+			)
+		
+		# Verify password
+		if not verify_password(login_data.password, account.password_hash):
+			raise HTTPException(
+				status_code=status.HTTP_401_UNAUTHORIZED,
+				detail="Incorrect username/email or password",
+			)
+		
+		# Create access token
+		access_token = create_access_token(
+			data={"sub": str(account.account_id), "username": account.username}
 		)
-	
-	# Verify password
-	if not verify_password(login_data.password, account.password_hash):
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Incorrect username/email or password",
+		
+		return TokenResponse(
+			access_token=access_token,
+			token_type="bearer",
+			account_id=str(account.account_id),
+			username=account.username,
+			account_type=account.type,
 		)
-	
-	# Create access token
-	access_token = create_access_token(
-		data={"sub": str(account.account_id), "username": account.username}
-	)
-	
-	return TokenResponse(
-		access_token=access_token,
-		token_type="bearer",
-		account_id=str(account.account_id),
-		username=account.username,
-		account_type=account.type,
-	)
+	except HTTPException:
+		# Re-raise HTTP exceptions as-is
+		raise
+	except Exception as e:
+		# Log the full error for debugging
+		logger.error(f"Login error: {str(e)}")
+		logger.error(traceback.format_exc())
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail=f"Internal server error: {str(e)}",
+		)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
