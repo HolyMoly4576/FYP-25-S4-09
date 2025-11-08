@@ -36,7 +36,7 @@ cd <your-repo-folder>
 
 - Ensure Python 3.8+ is installed
 
-#### - Create Virtual Environment
+#### - Create Virtual Environment in root folder 
 
 python -m venv venv
 
