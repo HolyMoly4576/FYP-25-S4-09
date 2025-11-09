@@ -1,7 +1,8 @@
 from sqlalchemy import Column, String, DateTime, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base 
+
 import uuid
 
 Base = declarative_base()
