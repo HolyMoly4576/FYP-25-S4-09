@@ -88,7 +88,7 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 			token_type="bearer",
 			account_id=str(account.account_id),
 			username=account.username,
-			account_type=account.type,
+			account_type=account.account_type,
 		)
 	except HTTPException:
 		# Re-raise HTTP exceptions as-is
@@ -109,10 +109,10 @@ def register(register_data: RegisterRequest, db: Session = Depends(get_db)):
 	Registration endpoint. Creates a new account.
 	"""
 	# Validate account type
-	if register_data.account_type not in ["FREE", "PAID"]:
+	if register_data.account_type not in ["FREE", "PAID", "SYSADMIN"]:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Account type must be 'FREE' or 'PAID'",
+			detail="Account type must be 'FREE', 'PAID', or 'SYSADMIN'",
 		)
 	
 	# Check if username already exists
@@ -138,7 +138,7 @@ def register(register_data: RegisterRequest, db: Session = Depends(get_db)):
 		username=register_data.username,
 		email=register_data.email,
 		password_hash=hashed_password,
-		type=register_data.account_type,
+		account_type=register_data.account_type,
 	)
 	
 	db.add(new_account)
@@ -149,7 +149,7 @@ def register(register_data: RegisterRequest, db: Session = Depends(get_db)):
 		account_id=str(new_account.account_id),
 		username=new_account.username,
 		email=new_account.email,
-		account_type=new_account.type,
+		account_type=new_account.account_type,
 		created_at=new_account.created_at.isoformat(),
 	)
 
@@ -189,6 +189,6 @@ def get_current_user(
 		account_id=str(account.account_id),
 		username=account.username,
 		email=account.email,
-		account_type=account.type,
+		account_type=account.account_type,
 		created_at=account.created_at.isoformat(),
 	)

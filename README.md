@@ -114,6 +114,7 @@ docker-compose down
 - Start backend: `uvicorn main:app --reload`
 - Start frontend: `npm start`
 - Start everything: `docker-compose up --build`
+- Start up the PGSQL shell: `docker exec -it postgres_db psql -U user -d database`
 
 ---
 
