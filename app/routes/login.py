@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -9,14 +9,12 @@ import logging
 from app.db.session import get_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, create_access_token
-from app.core.config import get_settings
 import uuid
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-settings = get_settings()
+oauth2_scheme = HTTPBearer()
 
 
 class LoginRequest(BaseModel):
@@ -78,6 +76,9 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 				detail="Incorrect username/email or password",
 			)
 		
+		# Ensure account_type has a value (default to 'FREE' if None)
+		account_type = account.account_type if account.account_type else "FREE"
+		
 		# Create access token
 		access_token = create_access_token(
 			data={"sub": str(account.account_id), "username": account.username}
@@ -88,7 +89,7 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 			token_type="bearer",
 			account_id=str(account.account_id),
 			username=account.username,
-			account_type=account.account_type,
+			account_type=account_type,
 		)
 	except HTTPException:
 		# Re-raise HTTP exceptions as-is
@@ -97,9 +98,13 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 		# Log the full error for debugging
 		logger.error(f"Login error: {str(e)}")
 		logger.error(traceback.format_exc())
+		# Return more detailed error in development
+		error_detail = str(e)
+		if hasattr(e, '__traceback__'):
+			error_detail += f"\n{traceback.format_exc()}"
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail=f"Internal server error: {str(e)}",
+			detail=f"Internal server error: {error_detail}",
 		)
 
 
@@ -156,39 +161,53 @@ def register(register_data: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user(
-	token: str = Depends(oauth2_scheme),
-	db: Session = Depends(get_db)
+    token = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
 ):
-	"""
-	Get current authenticated user information.
-	"""
-	from app.core.security import decode_access_token
-	
-	payload = decode_access_token(token)
-	if not payload:
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid authentication credentials",
-		)
-	
-	account_id = payload.get("sub")
-	if not account_id:
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid authentication credentials",
-		)
-	
-	account = db.query(Account).filter(Account.account_id == account_id).first()
-	if not account:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="User not found",
-		)
-	
-	return UserResponse(
-		account_id=str(account.account_id),
-		username=account.username,
-		email=account.email,
-		account_type=account.account_type,
-		created_at=account.created_at.isoformat(),
-	)
+    """
+    Get current authenticated user information.
+    """
+    from app.core.security import decode_access_token
+
+    try:
+        # ✅ Extract the raw token string from the HTTPAuthorizationCredentials object
+        token_str = token.credentials if hasattr(token, "credentials") else token
+
+        payload = decode_access_token(token_str)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+            )
+
+        account_id = payload.get("sub")
+        if not account_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+            )
+
+        account = db.query(Account).filter(Account.account_id == account_id).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        return UserResponse(
+            account_id=str(account.account_id),
+            username=account.username,
+            email=account.email,
+            account_type=account.account_type,
+            created_at=account.created_at.isoformat(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in /auth/me: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )

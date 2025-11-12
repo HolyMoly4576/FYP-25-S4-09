@@ -20,7 +20,21 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  
+
+  test_postgres_db:
+    image: postgres:15
+    container_name: test_postgres_db
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: test_fyp
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./Database/test_database.sql:/docker-entrypoint-initdb.d/test_database.sql
+    networks:
+      - storage_network
+
   storage_node_1:
     build:
       context: ./storage-node
