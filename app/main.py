@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes.login import router as auth_router
 from app.routes.userprofiles import router as userprofiles_router
 from app.routes.update_free_user import router as update_user_router
+from app.routes.folders import router as folders_router
 
 app = FastAPI(title="FYP Secure File Sharing API", version="0.1.0")
 
@@ -19,10 +20,9 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(userprofiles_router)
 app.include_router(update_user_router)
+app.include_router(folders_router)
 
-# Health check?
+# Health check
 @app.get("/healthz")
 def healthz() -> dict:
 	return {"status": "ok"}
-
-
