@@ -111,7 +111,7 @@ docker-compose down
 - Activate Python venv: `source venv/bin/activate`
 - Install Python deps: `pip install -r requirements.txt`
 - Install frontend deps: `npm install`
-- Start backend: `uvicorn main:app --reload`
+- Start backend: `uvicorn app.main:app --reload`
 - Start frontend: `npm start`
 - Start everything: `docker-compose up --build`
 - Start up the PGSQL shell: `docker exec -it postgres_db psql -U user -d database`
