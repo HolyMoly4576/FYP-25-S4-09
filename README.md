@@ -118,6 +118,13 @@ docker-compose down
 
 ---
 
+## How to run the unit testing 
+
+- Go to root folder then run this: `pip install fastapi[all]`
+- Run: `pytest -v test/`
+
+--- 
+
 ## Database Setup
 
 - To seed database, run the commands in `seed_data.sql` using your PostgreSQL client or as part of the container setup.
