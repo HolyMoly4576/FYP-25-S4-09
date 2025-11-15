@@ -40,13 +40,16 @@ SELECT
     a.username,
     a.email,
     a.created_at,
-    pa.subscription_type,
+    pa.storage_limit_gb,
+    pa.monthly_cost,
     pa.start_date,
     pa.renewal_date,
+    pa.end_date,
+    pa.status,
     'Paid account with extended storage and features' AS description
 FROM account a
 INNER JOIN paid_account pa ON a.account_id = pa.account_id
-WHERE a.type = 'PAID';
+WHERE a.account_type = 'PAID';
 
 -- View: Account Profile Types
 -- Lists all available account types (can be used by the API endpoint)

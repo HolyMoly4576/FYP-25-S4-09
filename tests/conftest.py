@@ -15,9 +15,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
+from datetime import datetime, timedelta, timezone
 from app.core.config import get_settings
 from app.core.security import get_password_hash
-from app.models import Base, Account
+from app.models import Base, Account, FreeAccount, PaidAccount
 from app.main import app
 from app.db.session import get_db
 
@@ -114,6 +115,26 @@ def seed_data(db_session):
 
     db_session.add_all([alice, bob])
     # Flush to make objects available
+    db_session.flush()
+    
+    # Create FreeAccount for alice
+    free_account = FreeAccount(
+        account_id=alice.account_id,
+        storage_limit_gb=2
+    )
+    
+    # Create PaidAccount for bob
+    now = datetime.now(timezone.utc)
+    paid_account = PaidAccount(
+        account_id=bob.account_id,
+        storage_limit_gb=30,
+        monthly_cost=10.00,
+        start_date=now,
+        renewal_date=now + timedelta(days=30),
+        status="ACTIVE"
+    )
+    
+    db_session.add_all([free_account, paid_account])
     db_session.flush()
     
     # Create a savepoint after seeding
