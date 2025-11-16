@@ -138,6 +138,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: ./app/Dockerfile
+    container_name: app
+    ports:
+      - "8004:8000"   
+    environment:
+      DATABASE_URL: postgresql://user:password@postgres:5432/database
+      TEST_DATABASE_URL: postgresql://test_user:test_password@test_postgres_db:5432/test_fyp
+    networks:
+      - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
   
 networks:
   storage_network:
