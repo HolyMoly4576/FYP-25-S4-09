@@ -11,14 +11,23 @@
 
 .
 ├── app/ # FastAPI backend
+
 ├── frontend/ # React.js frontend
+
 ├── migrations/ # DB migrations
-├── venv/ # Python virtual environment (don't commit)
-├── .env # Environment variables
+
+├── venv/ # Python virtual environment (don't commit, need to create on your own device, instructions below)
+
+├── .env # Environment variables (A copy of it is below, copy and paste it into the root directory)
+
 ├── Dockerfile # Backend Docker config
+
 ├── docker-compose.yml
+
 ├── requirements.txt # Backend Python dependencies
+
 ├── seed_data.sql # SQL seed file for DB
+
 └── README.md
 
 
@@ -54,9 +63,9 @@ pip install -r requirements.txt
 
 cd app
 
-uvicorn main:app --reload
+uvicorn app.main:app --reload
 
-*(Replace `main:app` with your actual FastAPI entrypoint)*
+(This command line will allow you to access swaggerUI for simple testing)
 
 ---
 
@@ -65,6 +74,8 @@ uvicorn main:app --reload
 - Ensure Node.js and npm are installed
 
 #### - Install React Dependencies
+
+cd "to your root directory"
 
 cd frontend
 
@@ -104,6 +115,16 @@ docker-compose down
 
 - Copy `.env.example` to `.env` and fill in your secret keys and DB credentials as needed.
 
+"database_url=postgresql+psycopg2://user:password@localhost:5433/database
+test_database_url=postgresql+psycopg2://test_user:test_password@localhost:5432/test_fyp
+
+postgres_host=localhost
+postgres_port=5433
+postgres_user=user
+postgres_password=password
+postgres_db=database"
+
+
 ---
 
 ## Useful Commands
@@ -111,12 +132,19 @@ docker-compose down
 - Activate Python venv: `source venv/bin/activate`
 - Install Python deps: `pip install -r requirements.txt`
 - Install frontend deps: `npm install`
-- Start backend: `uvicorn main:app --reload`
-- Start frontend: `npm start`
+- Start backend: `uvicorn app.main:app --reload`
+- Start frontend: `npm run start`
 - Start everything: `docker-compose up --build`
 - Start up the PGSQL shell: `docker exec -it postgres_db psql -U user -d database`
 
 ---
+
+## How to run the unit testing 
+
+- Go to root folder then run this: `pip install fastapi[all]`
+- Run: `pytest`
+
+--- 
 
 ## Database Setup
 
