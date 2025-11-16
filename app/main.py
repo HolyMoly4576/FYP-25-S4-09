@@ -11,12 +11,16 @@ from app.routes.delete_folders_and_files import folders_router as delete_folders
 
 app = FastAPI(title="FYP Secure File Sharing API", version="0.1.0")
 
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+]
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include routers
