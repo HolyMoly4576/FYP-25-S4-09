@@ -24,6 +24,8 @@ COPY .env ./
 
 # Add the workspace directory to Python path so app.* imports work
 ENV PYTHONPATH=/workspace
+ENV PYTHONUNBUFFERED=1
+ENV ENVIRONMENT=docker
 
 # Expose port
 EXPOSE 8000

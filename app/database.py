@@ -10,6 +10,9 @@ load_dotenv()
 # Get database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if os.getenv("ENVIRONMENT") != "docker":  
+    load_dotenv()
+
 # SQLAlchemy engine and session setup
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
