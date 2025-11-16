@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
 from app.core.config import get_settings
 from app.core.security import get_password_hash
-from app.models import Base, Account, FreeAccount, PaidAccount
+from app.models import Base, Account, FreeAccount, PaidAccount, FileObject, PasswordResetToken, ActivityLog
 from app.main import app
 from app.db.session import get_db
 

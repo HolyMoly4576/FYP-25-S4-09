@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ import logging
 from app.db.session import get_db
 from app.models import Account, FreeAccount, PaidAccount
 from app.core.security import decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,7 @@ def get_storage_usage(
 @router.patch("/update", response_model=UpdateStorageResponse)
 def update_storage_limit(
     body: UpdateStorageRequest,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -197,6 +199,22 @@ def update_storage_limit(
         
         db.commit()
         db.refresh(paid_account)
+        
+        # Log storage update activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="STORAGE_UPDATE",
+            resource_type="ACCOUNT",
+            resource_id=current_account.account_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={
+                "storage_limit_gb": paid_account.storage_limit_gb,
+                "monthly_cost": float(paid_account.monthly_cost),
+                "renewal_date": paid_account.renewal_date.isoformat()
+            }
+        )
         
         return UpdateStorageResponse(
             account_id=str(current_account.account_id),

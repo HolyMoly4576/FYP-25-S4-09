@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -8,6 +8,7 @@ import logging
 from app.db.session import get_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme  # using HTTPBearer now
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ def get_current_account(
 @router.put("/profile", response_model=UpdateUserResponse)
 def update_profile(
     profile_data: UpdateProfileRequest,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -149,6 +151,18 @@ def update_profile(
         db.commit()
         db.refresh(current_account)
 
+        # Log profile update activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="PROFILE_UPDATE",
+            resource_type="ACCOUNT",
+            resource_id=current_account.account_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={"updated_fields": updated_fields}
+        )
+
         return UpdateUserResponse(
             account_id=str(current_account.account_id),
             username=current_account.username,
@@ -176,6 +190,7 @@ def update_profile(
 @router.put("/password", response_model=UpdateUserResponse)
 def update_password(
     password_data: UpdatePasswordRequest,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -208,6 +223,18 @@ def update_password(
         current_account.password_hash = get_password_hash(password_data.new_password)
         db.commit()
         db.refresh(current_account)
+
+        # Log password change activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="PASSWORD_CHANGE",
+            resource_type="ACCOUNT",
+            resource_id=current_account.account_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={}
+        )
 
         return UpdateUserResponse(
             account_id=str(current_account.account_id),

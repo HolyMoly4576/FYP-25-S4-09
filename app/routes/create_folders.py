@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -8,6 +8,7 @@ import uuid
 from app.db.session import get_db
 from app.models import Account, Folder
 from app.core.security import decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def get_current_account(
 @router.post("", response_model=FolderResponse, status_code=status.HTTP_201_CREATED)
 def create_folder(
     body: CreateFolderRequest,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -81,6 +83,18 @@ def create_folder(
     db.add(folder)
     db.commit()
     db.refresh(folder)
+
+    # Log folder creation activity
+    log_activity(
+        db=db,
+        account_id=current_account.account_id,
+        action_type="FOLDER_CREATE",
+        resource_type="FOLDER",
+        resource_id=folder.folder_id,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+        details={"folder_name": folder.name, "parent_folder_id": str(folder.parent_folder_id) if folder.parent_folder_id else None}
+    )
 
     return FolderResponse(
         folder_id=folder.folder_id,

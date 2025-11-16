@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, DateTime, CheckConstraint, ForeignKey, Integer, Numeric, BigInteger, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base
 import uuid
@@ -69,3 +69,30 @@ class FileObject(Base):
     file_size = Column(BigInteger, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     logical_path = Column(Text, nullable=False)
+
+
+# Password Reset Token model
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    token_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(255), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# Activity Log model
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+
+    activity_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    action_type = Column(String(50), nullable=False)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(UUID(as_uuid=True), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

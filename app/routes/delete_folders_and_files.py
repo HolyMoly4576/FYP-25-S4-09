@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import logging
@@ -7,6 +7,7 @@ import uuid
 from app.db.session import get_db
 from app.models import Account, Folder, FileObject
 from app.core.security import decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ def get_current_account(
 @folders_router.delete("/{folder_id}", response_model=DeleteFolderResponse)
 def delete_folder(
     folder_id: uuid.UUID,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -80,6 +82,18 @@ def delete_folder(
         db.delete(folder)
         db.commit()
         
+        # Log folder deletion activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="FOLDER_DELETE",
+            resource_type="FOLDER",
+            resource_id=folder_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={"folder_name": folder_name}
+        )
+        
         return DeleteFolderResponse(
             message=f"Folder '{folder_name}' and all its contents have been permanently deleted",
             deleted_folder_id=folder_id_str,
@@ -99,6 +113,7 @@ def delete_folder(
 @files_router.delete("/{file_id}", response_model=DeleteFileResponse)
 def delete_file(
     file_id: uuid.UUID,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -123,10 +138,23 @@ def delete_file(
         # Store file info for response
         file_name = file_obj.file_name
         file_id_str = str(file_obj.file_id)
+        file_size = file_obj.file_size
         
         # Delete the file (CASCADE will handle versions, segments, fragments automatically)
         db.delete(file_obj)
         db.commit()
+        
+        # Log file deletion activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="FILE_DELETE",
+            resource_type="FILE",
+            resource_id=file_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={"file_name": file_name, "file_size": file_size}
+        )
         
         return DeleteFileResponse(
             message=f"File '{file_name}' and all its versions have been permanently deleted",

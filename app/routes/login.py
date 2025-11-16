@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
@@ -9,6 +9,7 @@ import logging
 from app.db.session import get_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def get_account_by_username_or_email(db: Session, username_or_email: str) -> Opt
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_db)):
 	"""
 	Login endpoint. Accepts username/email and password.
 	Returns JWT access token on successful authentication.
@@ -82,6 +83,18 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 		# Create access token
 		access_token = create_access_token(
 			data={"sub": str(account.account_id), "username": account.username}
+		)
+		
+		# Log login activity
+		log_activity(
+			db=db,
+			account_id=account.account_id,
+			action_type="LOGIN",
+			resource_type="ACCOUNT",
+			resource_id=account.account_id,
+			ip_address=get_client_ip(request),
+			user_agent=get_user_agent(request),
+			details={"username": account.username, "account_type": account_type}
 		)
 		
 		return TokenResponse(

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -8,6 +8,7 @@ import uuid
 from app.db.session import get_db
 from app.models import Account, Folder
 from app.core.security import decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ def is_descendant(db: Session, folder_id: uuid.UUID, potential_ancestor_id: uuid
 def move_folder(
     folder_id: uuid.UUID,
     body: MoveFolderRequest,
+    request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
@@ -148,9 +150,26 @@ def move_folder(
                 )
         
         # 5. Update the folder's parent
+        old_parent_id = folder.parent_folder_id
         folder.parent_folder_id = body.new_parent_folder_id
         db.commit()
         db.refresh(folder)
+        
+        # Log folder move activity
+        log_activity(
+            db=db,
+            account_id=current_account.account_id,
+            action_type="FOLDER_MOVE",
+            resource_type="FOLDER",
+            resource_id=folder_id,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            details={
+                "folder_name": folder.name,
+                "old_parent_id": str(old_parent_id) if old_parent_id else None,
+                "new_parent_id": str(body.new_parent_folder_id) if body.new_parent_folder_id else None
+            }
+        )
         
         return FolderResponse(
             folder_id=folder.folder_id,
