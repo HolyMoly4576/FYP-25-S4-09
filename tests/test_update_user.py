@@ -77,3 +77,4 @@ def test_update_password_success(client, seed_data):
     login_data_new = {"username_or_email": "alice", "password": "newpassword123"}
     login_response_new = client.post("/auth/login", json=login_data_new)
     assert login_response_new.status_code == 200
+

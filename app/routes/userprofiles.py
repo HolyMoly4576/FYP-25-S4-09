@@ -23,18 +23,14 @@ def get_user_profiles():
 	Get available user profile types for login dropdown.
 	
 	Returns a list of user profile types that can be selected on the login page.
-	FREE and PAID users share the same login interface, while SYSADMIN has a separate interface.
+	FREE and PAID users share the same login interface ("user"), while SYSADMIN has a separate interface ("sysadmin").
+	The system automatically determines the actual account type (FREE/PAID) after login.
 	"""
 	try:
 		profiles = [
 			UserProfile(
-				profile_type="FREE",
-				description="Free account with limited storage",
-				login_interface="user"
-			),
-			UserProfile(
-				profile_type="PAID",
-				description="Paid account with extended storage and features",
+				profile_type="USER",
+				description="Regular user account (Free or Paid)",
 				login_interface="user"
 			),
 			UserProfile(

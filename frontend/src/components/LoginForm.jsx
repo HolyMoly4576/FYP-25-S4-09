@@ -29,13 +29,13 @@ function LoginForm({ toggle }) {
           setSelectedRole(data[0]);
           setRolesError(""); // clear existing fetch error if successful
         } else {
-          setRoles(["FREE", "PAID", "SYSADMIN"]);
-          setSelectedRole("FREE");
+          setRoles(["USER", "SYSADMIN"]);
+          setSelectedRole("USER");
           setRolesError("No roles found. Using default options.");
         }
       } catch (err) {
-        setRoles(["FREE", "PAID", "SYSADMIN"]);
-        setSelectedRole("FREE");
+        setRoles(["USER", "SYSADMIN"]);
+        setSelectedRole("USER");
         setRolesError("Could not fetch roles. Using defaults.");
       }
     }
@@ -71,19 +71,23 @@ function LoginForm({ toggle }) {
 
     setLoading(true);
     try {
-      await loginUser({
+      const response = await loginUser({
         username_or_email: identifier,
         password,
-        account_type: selectedRole, // as required by your backend
+        selected_role: selectedRole, // Send selected role for validation
       });
       localStorage.setItem("username", identifier);
-      localStorage.setItem("role", selectedRole);
+      // Use account_type from response (actual account type: FREE, PAID, or SYSADMIN)
+      const accountType = response.account_type || selectedRole;
+      localStorage.setItem("role", accountType);
       setShowSuccessAlert(true);
       setTimeout(() => {
         setShowSuccessAlert(false);
-        if (selectedRole === "SYSADMIN") {
+        // Redirect based on actual account_type from backend response
+        if (accountType === "SYSADMIN") {
           navigate("/Admin/Admin-Dashboard");
         } else {
+          // FREE and PAID both go to user dashboard
           navigate("/User/User-Dashboard");
         }
         toggle && toggle();
@@ -131,7 +135,7 @@ function LoginForm({ toggle }) {
             >
               {roles.map((role, idx) => (
                 <option key={idx} value={role}>
-                  {role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}
+                  {role === "USER" ? "User" : role === "SYSADMIN" ? "Sysadmin" : role}
                 </option>
               ))}
             </select>
