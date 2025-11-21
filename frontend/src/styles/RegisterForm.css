@@ -1,0 +1,128 @@
+.popup {
+  position: fixed;
+  z-index: 1200;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow-y: auto;
+  background: rgba(35, 98, 174, 0.16);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.popup-inner {
+  background: #f8fbfd;
+  border-radius: 18px;
+  box-shadow: 0 3px 24px rgba(35, 118, 174, 0.10);
+  padding: 2.4rem 2.1rem 2.1rem 2.1rem;
+  min-width: 330px;
+  max-width: 355px;
+  width: 90vw;
+  position: relative;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.03rem;
+}
+
+.popup-inner h2 {
+  color: #19507e;
+  margin-bottom: 1.03rem;
+  text-align: center;
+  font-size: 1.55rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.register-form label {
+  color: #19507e;
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 0.09rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.register-form input {
+  padding: 0.66rem 1rem;
+  font-size: 1.04rem;
+  border-radius: 8px;
+  border: 1.2px solid #bce6fb;
+  background: #fff;
+  box-sizing: border-box;
+  margin-top: 0.23rem;
+  transition: border 0.17s, box-shadow 0.19s;
+}
+
+.register-form input:focus {
+  border-color: #32b7ed;
+  box-shadow: 0 1px 8px rgba(48, 198, 252, 0.12);
+  outline: none;
+}
+
+.register-form button[type="submit"] {
+  margin-top: 0.7rem;
+  padding: 0.75rem 0;
+  background: linear-gradient(90deg, #2487cb 20%, #30c6fc 80%);
+  color: #fff;
+  border: none;
+  border-radius: 30px;
+  font-size: 1.11rem;
+  font-weight: 600;
+  box-shadow: 0 3px 16px rgba(35,118,174,0.13);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: background 0.19s, box-shadow 0.17s, transform 0.1s;
+}
+
+.register-form button[type="submit"]:hover,
+.register-form button[type="submit"]:focus {
+  background: linear-gradient(90deg, #37b6f7 0%, #2487cb 100%);
+  box-shadow: 0 5px 22px rgba(35,118,174,0.19);
+  transform: translateY(-2px) scale(1.03);
+}
+
+.close-btn {
+  background: transparent;
+  color: #2376ae;
+  font-size: 1rem;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  margin-top: 0.95rem;
+  text-align: center;
+  display: block;
+  padding: 0.4rem 1.3rem 0.4rem 1.3rem;
+  border-radius: 10px;
+  font-weight: 600;
+  transition: background 0.16s, color 0.13s;
+}
+
+.close-btn:hover,
+.close-btn:focus {
+  background: #e6f2fc;
+  color: #108ae6;
+}
+
+/* Response Message */
+.response {
+  color: #e25d5d;
+  margin: 0.7rem 0 0.2rem 0;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* Responsive tweaks */
+@media (max-width: 600px) {
+  .popup-inner {
+    min-width: 90vw;
+    max-width: 98vw;
+    padding: 1rem 0.3rem 1rem 0.3rem;
+  }
+}
