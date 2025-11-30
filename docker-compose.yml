@@ -1,5 +1,5 @@
 services:
-  # Master node with embedded database
+  # Master node with PostgreSQL database
   master_node:
     build:
       context: ./master-node
@@ -8,15 +8,25 @@ services:
     environment:
       NODE_ROLE: MASTER
       NODE_HOSTNAME: master_node
+      NODE_PORT: 3000
       HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/master_node
-      DB_PATH: /data/master.db
+      # PostgreSQL connection
+      POSTGRES_HOST: postgres_db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: database
+      DATABASE_URL: postgresql://user:password@postgres_db:5432/database
     ports:
-      - "8000:3000"  # Master node API and database
+      - "8000:3000"  # Master node API
     volumes:
       - master_node_data:/data
     networks:
       - storage_network
+    depends_on:
+      postgres_db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 10s
@@ -90,6 +100,27 @@ services:
       master_node:
         condition: service_healthy
 
+  # Production/Development database
+  postgres_db:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: database
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./Database/Database.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - storage_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d database"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # Keep test database for backend testing
   test_postgres_db:
     image: postgres:15
@@ -101,7 +132,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./Database/test_database.sql:/docker-entrypoint-initdb.d/test_database.sql
+      - test_postgres_data:/var/lib/postgresql/data
+      - ./Database/Database.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - storage_network
 
@@ -133,3 +165,5 @@ volumes:
   storage_node_1_data:
   storage_node_2_data:
   storage_node_3_data:
+  postgres_data:
+  test_postgres_data:
