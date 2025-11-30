@@ -6,9 +6,10 @@ from typing import Optional
 import traceback
 import logging
 
-from app.db.session import get_db
-from app.models import Account, FreeAccount
+from app.db.session import get_db, get_master_node_db
+from app.models import Account
 from app.core.security import verify_password, get_password_hash, create_access_token
+from app.master_node_db import MasterNodeDB
 from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 import uuid
 
@@ -47,23 +48,36 @@ class UserResponse(BaseModel):
 	created_at: str
 
 
-def get_account_by_username_or_email(db: Session, username_or_email: str) -> Optional[Account]:
-	"""Get account by username or email."""
-	account = db.query(Account).filter(
-		(Account.username == username_or_email) | (Account.email == username_or_email)
-	).first()
-	return account
+def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, username_or_email: str) -> Optional[dict]:
+	"""Get account by username or email from master node database (PostgreSQL)."""
+	try:
+		# Query account table in master node database (PostgreSQL)
+		query = """
+		SELECT account_id, username, email, password_hash, account_type, created_at
+		FROM account 
+		WHERE username = $1 OR email = $2
+		"""
+		
+		result = master_db.select(query, [username_or_email, username_or_email])
+		
+		if result:
+			return result[0]  # Return first matching user
+		return None
+	except Exception as e:
+		logger.error(f"Error querying master node for user {username_or_email}: {str(e)}")
+		logger.error(f"Traceback: {traceback.format_exc()}")
+		return None
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+def login(login_data: LoginRequest, master_db: MasterNodeDB = Depends(get_master_node_db)):
 	"""
-	Login endpoint. Accepts username/email and password.
+	Login endpoint using master node database (PostgreSQL). Accepts username/email and password.
 	Returns JWT access token on successful authentication.
 	"""
 	try:
-		# Find account by username or email
-		account = get_account_by_username_or_email(db, login_data.username_or_email)
+		# Find account by username or email from master node (PostgreSQL)
+		account = get_account_by_username_or_email_master_node(master_db, login_data.username_or_email)
 		
 		if not account:
 			raise HTTPException(
@@ -72,14 +86,14 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
 			)
 		
 		# Verify password
-		if not verify_password(login_data.password, account.password_hash):
+		if not verify_password(login_data.password, account["password_hash"]):
 			raise HTTPException(
 				status_code=status.HTTP_401_UNAUTHORIZED,
 				detail="Incorrect username/email or password",
 			)
 		
-		# Ensure account_type has a value (default to 'FREE' if None)
-		account_type = account.account_type if account.account_type else "FREE"
+		# Get account type (default to 'FREE' if None)
+		account_type = account.get("account_type", "FREE")
 		
 		# Validate selected_role against actual account type
 		# If selected_role is provided, validate it matches the account
@@ -103,7 +117,7 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
 		
 		# Create access token
 		access_token = create_access_token(
-			data={"sub": str(account.account_id), "username": account.username}
+			data={"sub": account["account_id"], "username": account["username"]}
 		)
 		
 		# Log login activity
@@ -121,99 +135,176 @@ def login(login_data: LoginRequest, request: Request, db: Session = Depends(get_
 		return TokenResponse(
 			access_token=access_token,
 			token_type="bearer",
-			account_id=str(account.account_id),
-			username=account.username,
-			account_type=account_type,
+			account_id=account["account_id"],
+			username=account["username"],
+			account_type=account_type
 		)
+		
 	except HTTPException:
 		# Re-raise HTTP exceptions as-is
 		raise
 	except Exception as e:
-		# Log the full error for debugging
 		logger.error(f"Login error: {str(e)}")
-		logger.error(traceback.format_exc())
-		# Return more detailed error in development
-		error_detail = str(e)
-		if hasattr(e, '__traceback__'):
-			error_detail += f"\n{traceback.format_exc()}"
+		logger.error(f"Traceback: {traceback.format_exc()}")
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail=f"Internal server error: {error_detail}",
+			detail="Internal server error during login"
 		)
+
+# Keep the old login route as backup (commented out)
+# @router.post("/login-old", response_model=TokenResponse)
+# def login_old(login_data: LoginRequest, db: Session = Depends(get_db)):
+#	"""
+#	Login endpoint. Accepts username/email and password.
+#	Returns JWT access token on successful authentication.
+#	"""
+#	try:
+#		# Find account by username or email
+#		account = get_account_by_username_or_email(db, login_data.username_or_email)
+#		
+#		if not account:
+#			raise HTTPException(
+#				status_code=status.HTTP_401_UNAUTHORIZED,
+#				detail="Incorrect username/email or password",
+#			)
+#		
+#		# Verify password
+#		if not verify_password(login_data.password, account.password_hash):
+#			raise HTTPException(
+#				status_code=status.HTTP_401_UNAUTHORIZED,
+#				detail="Incorrect username/email or password",
+#			)
+#		
+#		# Ensure account_type has a value (default to 'FREE' if None)
+#		account_type = account.account_type if account.account_type else "FREE"
+#		
+#		# Create access token
+#		access_token = create_access_token(
+#			data={"sub": str(account.account_id), "username": account.username}
+#		)
+#		
+#		return TokenResponse(
+#			access_token=access_token,
+#			token_type="bearer",
+#			account_id=str(account.account_id),
+#			username=account.username,
+#			account_type=account_type,
+#		)
+#	except HTTPException:
+#		# Re-raise HTTP exceptions as-is
+#		raise
+#	except Exception as e:
+#		# Log the full error for debugging
+#		logger.error(f"Login error: {str(e)}")
+#		logger.error(traceback.format_exc())
+#		# Return more detailed error in development
+#		error_detail = str(e)
+#		if hasattr(e, '__traceback__'):
+#			error_detail += f"\n{traceback.format_exc()}"
+#		raise HTTPException(
+#			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#			detail=f"Internal server error: {error_detail}",
+#		)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(register_data: RegisterRequest, db: Session = Depends(get_db)):
-	"""
-	Registration endpoint. Creates a new FREE account.
-	All new accounts are created as FREE by default.
-	Users can upgrade to PAID later using the upgrade endpoint.
-	"""
-	try:
-		# Check if username already exists
-		existing_username = db.query(Account).filter(Account.username == register_data.username).first()
-		if existing_username:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="Username already taken",
-			)
-		
-		# Check if email already exists
-		existing_email = db.query(Account).filter(Account.email == register_data.email).first()
-		if existing_email:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="Email already registered",
-			)
-		
-		# Create new account - always FREE
-		hashed_password = get_password_hash(register_data.password)
-		new_account = Account(
-			account_id=uuid.uuid4(),
-			username=register_data.username,
-			email=register_data.email,
-			password_hash=hashed_password,
-			account_type="FREE",  # Always FREE for new registrations
-		)
-		
-		db.add(new_account)
-		db.flush()  # Flush to get the account_id
-		
-		# Create FreeAccount record with default 2GB storage
-		free_account = FreeAccount(
-			account_id=new_account.account_id,
-			storage_limit_gb=2  # Default 2GB for free accounts
-		)
-		db.add(free_account)
-		db.commit()
-		db.refresh(new_account)
-		
-		return UserResponse(
-			account_id=str(new_account.account_id),
-			username=new_account.username,
-			email=new_account.email,
-			account_type=new_account.account_type,
-			created_at=new_account.created_at.isoformat(),
-		)
-	except HTTPException:
-		raise
-	except Exception as e:
-		db.rollback()
-		logger.error(f"Registration error: {str(e)}")
-		logger.error(traceback.format_exc())
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail=f"Error creating account: {str(e)}",
-		)
+def register(register_data: RegisterRequest, master_db: MasterNodeDB = Depends(get_master_node_db)):
+    """
+    Registration endpoint. Creates a new account through master node (PostgreSQL).
+    """
+    try:
+        # Check if username already exists
+        username_check = master_db.select(
+            "SELECT account_id FROM account WHERE username = $1",
+            [register_data.username]
+        )
+        if username_check:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken",
+            )
+
+        # Check if email already exists
+        email_check = master_db.select(
+            "SELECT account_id FROM account WHERE email = $1",
+            [register_data.email]
+        )
+        if email_check:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+
+        # Create new account
+        account_id = str(uuid.uuid4())
+        hashed_password = get_password_hash(register_data.password)
+
+        # Insert account into database via master node
+        master_db.execute(
+            """
+            INSERT INTO account (account_id, username, email, password_hash, account_type, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+            """,
+            [account_id, register_data.username, register_data.email, hashed_password, "FREE"]
+        )
+
+        # Create account-specific records (FREE only)
+        master_db.execute(
+            "INSERT INTO free_account (account_id, storage_limit_gb) VALUES ($1, $2)",
+            [account_id, 2]
+        )
+
+        # Retrieve the created account to return
+        account_result = master_db.select(
+            """
+            SELECT account_id, username, email, account_type, created_at
+            FROM account 
+            WHERE account_id = $1
+            """,
+            [account_id]
+        )
+
+        if not account_result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve created account",
+            )
+
+        account = account_result[0]
+
+        # Format created_at properly
+        created_at = account["created_at"]
+        if isinstance(created_at, str):
+            created_at_str = created_at
+        else:
+            created_at_str = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+
+        return UserResponse(
+            account_id=account["account_id"],
+            username=account["username"],
+            email=account["email"],
+            account_type=account["account_type"],
+            created_at=created_at_str,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error during registration: {str(e)}"
+        )
 
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user(
     token = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    master_db: MasterNodeDB = Depends(get_master_node_db)
 ):
     """
-    Get current authenticated user information.
+    Get current authenticated user information from master node (PostgreSQL).
     """
     from app.core.security import decode_access_token
 
@@ -235,19 +326,37 @@ def get_current_user(
                 detail="Invalid authentication credentials",
             )
 
-        account = db.query(Account).filter(Account.account_id == account_id).first()
-        if not account:
+        # Get account from master node (PostgreSQL)
+        account_result = master_db.select(
+            """
+            SELECT account_id, username, email, account_type, created_at
+            FROM account 
+            WHERE account_id = $1
+            """,
+            [account_id]
+        )
+        
+        if not account_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
 
+        account = account_result[0]
+        
+        # Format created_at properly
+        created_at = account["created_at"]
+        if isinstance(created_at, str):
+            created_at_str = created_at
+        else:
+            created_at_str = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+
         return UserResponse(
-            account_id=str(account.account_id),
-            username=account.username,
-            email=account.email,
-            account_type=account.account_type,
-            created_at=account.created_at.isoformat(),
+            account_id=account["account_id"],
+            username=account["username"],
+            email=account["email"],
+            account_type=account["account_type"],
+            created_at=created_at_str,
         )
 
     except HTTPException:

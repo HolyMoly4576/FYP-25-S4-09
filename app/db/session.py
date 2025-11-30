@@ -1,12 +1,14 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.core.config import get_settings
+from app.master_node_db import MasterNodeDB
 import os
 
 # Lazy initialization - only create when needed
 _settings = None
 _engine = None
 _SessionLocal = None
+_master_node_db = None
 
 def _get_settings():
     """Lazy load settings."""
@@ -39,3 +41,10 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_master_node_db():
+    """Get master node database interface."""
+    global _master_node_db
+    if _master_node_db is None:
+        _master_node_db = MasterNodeDB()
+    return _master_node_db

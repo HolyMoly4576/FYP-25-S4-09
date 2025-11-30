@@ -1,8 +1,17 @@
-import React from "react";
+import React, { useState } from "react";
+import RegisterForm from "../components/RegisterForm";
 import '../styles/HomePage.css';
 
 
 function HomePage({ toggleLogin }) {
+  const [showRegister, setShowRegister] = useState(false);
+
+  const handleRegisterSuccess = (userData) => {
+    // Handle successful registration (e.g., show login popup, redirect, etc.)
+    console.log("Registration successful:", userData);
+    toggleLogin(); // Example: show login after registration
+  };
+
   return (
     <div className="home-container">
       <div className="main-content">
@@ -14,7 +23,9 @@ function HomePage({ toggleLogin }) {
           </p>
         </section>
 
-        <button className="register-btn">Register</button>
+        <button className="register-btn" onClick={() => setShowRegister(true)}>
+          Register
+        </button>
 
         <section className="system-requirements card">
           <h2>🖥️ System Requirements for Users</h2>
@@ -76,6 +87,12 @@ function HomePage({ toggleLogin }) {
           </ol>
         </section>
       </div>
+      {showRegister && (
+        <RegisterForm
+          onClose={() => setShowRegister(false)}
+          onRegisterSuccess={handleRegisterSuccess}
+        />
+      )}
     </div>   
   );
 }

@@ -11,12 +11,14 @@ from app.routes.delete_folders_and_files import folders_router as delete_folders
 from app.routes.password_recovery import router as password_recovery_router
 from app.routes.activity_history import router as activity_history_router
 from app.routes.account_management import router as account_management_router
+from app.routes.upload_files import router as upload_files_router
+# from app.routes.test_master_node import router as test_router  # Commented out for now
 
 app = FastAPI(title="FYP Secure File Sharing API", version="0.1.0")
 
 origins = [
     "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3000"
 ]
 
 app.add_middleware(
@@ -39,8 +41,15 @@ app.include_router(delete_files_router)
 app.include_router(password_recovery_router)
 app.include_router(activity_history_router)
 app.include_router(account_management_router)
-
+app.include_router(upload_files_router)
+# app.include_router(test_router)  # Commented out for now
 # Health check
 @app.get("/healthz")
 def healthz() -> dict:
 	return {"status": "ok"}
+
+# Test master node connection
+@app.get("/test/master-node-connection")
+async def test_master_node_connection():
+    """Test connection to master node database."""
+    return {"status": "endpoint_working", "message": "Basic endpoint is functional"}
