@@ -1,5 +1,6 @@
 services:
-  # Master node with embedded database
+  # Remove separate postgres service since master node hosts the database
+  
   master_node:
     build:
       context: ./master-node
@@ -12,7 +13,7 @@ services:
       STORAGE_PATH: /data/master_node
       DB_PATH: /data/master.db
     ports:
-      - "8000:3000"  # Master node API and database
+      - "8000:3000"  # Master node API
     volumes:
       - master_node_data:/data
     networks:
@@ -23,7 +24,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Storage nodes connect to master node
   storage_node_1:
     build:
       context: ./storage-node
@@ -52,20 +52,24 @@ services:
       dockerfile: Dockerfile
     container_name: storage_node_2
     environment:
-      MASTER_NODE_HOST: master_node
-      MASTER_NODE_PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
       NODE_ROLE: STORAGE
       NODE_HOSTNAME: storage_node_2
       HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/storage_node_2
+      TOTAL_BYTES: 128589934592
     ports:
       - "8002:3000"
     volumes:
-      - storage_node_2_data:/data
+      - storage_node_2_data:/data/storage_node_2
     networks:
       - storage_network
     depends_on:
-      master_node:
+      postgres:
         condition: service_healthy
   
   storage_node_3:
@@ -74,38 +78,52 @@ services:
       dockerfile: Dockerfile
     container_name: storage_node_3
     environment:
-      MASTER_NODE_HOST: master_node
-      MASTER_NODE_PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
       NODE_ROLE: STORAGE
       NODE_HOSTNAME: storage_node_3
       HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/storage_node_3
+      TOTAL_BYTES: 128589934592
     ports:
       - "8003:3000"
     volumes:
-      - storage_node_3_data:/data
+      - storage_node_3_data:/data/storage_node_3
     networks:
       - storage_network
     depends_on:
-      master_node:
+      postgres:
         condition: service_healthy
-
-  # Keep test database for backend testing
-  test_postgres_db:
-    image: postgres:15
-    container_name: test_postgres_db
+  
+  master_node:
+    build:
+      context: ./master-node
+      dockerfile: Dockerfile
+    container_name: master_node
     environment:
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_password
-      POSTGRES_DB: test_fyp
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: database
+      NODE_ROLE: MASTER
+      NODE_HOSTNAME: master_node
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/master_node
+      TOTAL_BYTES: 128589934592
     ports:
-      - "5432:5432"
+      - "8000:3000"
     volumes:
-      - ./Database/test_database.sql:/docker-entrypoint-initdb.d/test_database.sql
+      - master_node_data:/data/master_node
     networks:
       - storage_network
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-  # Backend now connects to master node instead of postgres
   fastapi:
     build:
       context: .
@@ -114,14 +132,12 @@ services:
     ports:
       - "8004:8000"   
     environment:
-      # Master node connection for database queries
-      MASTER_NODE_URL: http://master_node:3000
-      # Keep test database for testing
+      DATABASE_URL: postgresql://user:password@postgres:5432/database
       TEST_DATABASE_URL: postgresql://test_user:test_password@test_postgres_db:5432/test_fyp
     networks:
       - storage_network
     depends_on:
-      master_node:
+      postgres:
         condition: service_healthy
   
 networks:
@@ -129,7 +145,8 @@ networks:
     driver: bridge
 
 volumes:
-  master_node_data:
+  postgres_data:
   storage_node_1_data:
   storage_node_2_data:
   storage_node_3_data:
+  master_node_data:

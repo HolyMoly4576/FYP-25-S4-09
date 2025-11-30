@@ -52,3 +52,26 @@ def get_user_profiles():
 			detail=f"Error retrieving user profiles: {str(e)}",
 		)
 
+
+@router.get("/test-master-node")
+async def test_master_node():
+	"""Test master node connection."""
+	try:
+		from app.master_node_db import get_master_db
+		master_db = get_master_db()
+		
+		# Test simple connection
+		nodes = master_db.get_nodes()
+		return {
+			"status": "success",
+			"message": "Master node connection working",
+			"node_count": len(nodes),
+			"nodes": nodes
+		}
+	except Exception as e:
+		return {
+			"status": "error", 
+			"message": str(e),
+			"master_url": "http://master_node:8000"
+		}
+

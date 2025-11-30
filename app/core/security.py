@@ -19,12 +19,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 	"""Verify a password against its hash."""
 	try:
 		# Check if the hash looks like a bcrypt hash (starts with $2a$, $2b$, or $2y$)
-		if not hashed_password.startswith(("$2a$", "$2b$", "$2y$")):
-			return False
-		# Convert password to bytes and hash to bytes
-		password_bytes = plain_password.encode('utf-8')
-		hash_bytes = hashed_password.encode('utf-8')
-		return bcrypt.checkpw(password_bytes, hash_bytes)
+		if hashed_password.startswith(("$2a$", "$2b$", "$2y$")):
+			# Convert password to bytes and hash to bytes
+			password_bytes = plain_password.encode('utf-8')
+			hash_bytes = hashed_password.encode('utf-8')
+			return bcrypt.checkpw(password_bytes, hash_bytes)
 	except (ValueError, TypeError, Exception):
 		# If verification fails or hash is invalid, return False
 		return False

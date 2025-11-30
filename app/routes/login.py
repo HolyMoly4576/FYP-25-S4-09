@@ -6,9 +6,10 @@ from typing import Optional
 import traceback
 import logging
 
-from app.db.session import get_db
+from app.db.session import get_db, get_master_node_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, create_access_token
+from app.master_node_db import MasterNodeDB
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -52,16 +53,46 @@ def get_account_by_username_or_email(db: Session, username_or_email: str) -> Opt
 	).first()
 	return account
 
+def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, username_or_email: str) -> Optional[dict]:
+	"""Get account by username or email from master node database."""
+	try:
+		# Query account table in master node database
+		query = """
+		SELECT account_id, username, email, password_hash, account_type, created_at
+		FROM account 
+		WHERE username = ? OR email = ?
+		"""
+		print(f"Executing query for user: {username_or_email}")
+		print(f"Query: {query}")
+		print(f"Params: [{username_or_email}, {username_or_email}]")
+		
+		result = master_db.select(query, [username_or_email, username_or_email])
+		print(f"Query result: {result}")
+		
+		if result:
+			return result[0]  # Return first matching user
+		return None
+	except Exception as e:
+		print(f"Error querying master node for user {username_or_email}: {str(e)}")
+		print(f"Exception details: {type(e).__name__}: {e}")
+		import traceback
+		print(f"Traceback: {traceback.format_exc()}")
+		return None
+
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+def login(login_data: LoginRequest, master_db: MasterNodeDB = Depends(get_master_node_db)):
 	"""
-	Login endpoint. Accepts username/email and password.
+	Login endpoint using master node database. Accepts username/email and password.
 	Returns JWT access token on successful authentication.
 	"""
 	try:
-		# Find account by username or email
-		account = get_account_by_username_or_email(db, login_data.username_or_email)
+		print(f"=== LOGIN ATTEMPT ===")
+		print(f"Username/email: {login_data.username_or_email}")
+		print(f"Password: {login_data.password}")
+		
+		# Find account by username or email from master node
+		account = get_account_by_username_or_email_master_node(master_db, login_data.username_or_email)
 		
 		if not account:
 			raise HTTPException(
@@ -70,42 +101,93 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 			)
 		
 		# Verify password
-		if not verify_password(login_data.password, account.password_hash):
+		if not verify_password(login_data.password, account["password_hash"]):
 			raise HTTPException(
 				status_code=status.HTTP_401_UNAUTHORIZED,
 				detail="Incorrect username/email or password",
 			)
 		
-		# Ensure account_type has a value (default to 'FREE' if None)
-		account_type = account.account_type if account.account_type else "FREE"
+		# Get account type (default to 'FREE' if None)
+		account_type = account.get("account_type", "FREE")
 		
 		# Create access token
 		access_token = create_access_token(
-			data={"sub": str(account.account_id), "username": account.username}
+			data={"sub": account["account_id"], "username": account["username"]}
 		)
 		
 		return TokenResponse(
 			access_token=access_token,
 			token_type="bearer",
-			account_id=str(account.account_id),
-			username=account.username,
-			account_type=account_type,
+			account_id=account["account_id"],
+			username=account["username"],
+			account_type=account_type
 		)
+		
 	except HTTPException:
 		# Re-raise HTTP exceptions as-is
 		raise
 	except Exception as e:
-		# Log the full error for debugging
 		logger.error(f"Login error: {str(e)}")
-		logger.error(traceback.format_exc())
-		# Return more detailed error in development
-		error_detail = str(e)
-		if hasattr(e, '__traceback__'):
-			error_detail += f"\n{traceback.format_exc()}"
+		logger.error(f"Traceback: {traceback.format_exc()}")
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail=f"Internal server error: {error_detail}",
+			detail="Internal server error during login"
 		)
+
+# Keep the old login route as backup (commented out)
+# @router.post("/login-old", response_model=TokenResponse)
+# def login_old(login_data: LoginRequest, db: Session = Depends(get_db)):
+#	"""
+#	Login endpoint. Accepts username/email and password.
+#	Returns JWT access token on successful authentication.
+#	"""
+#	try:
+#		# Find account by username or email
+#		account = get_account_by_username_or_email(db, login_data.username_or_email)
+#		
+#		if not account:
+#			raise HTTPException(
+#				status_code=status.HTTP_401_UNAUTHORIZED,
+#				detail="Incorrect username/email or password",
+#			)
+#		
+#		# Verify password
+#		if not verify_password(login_data.password, account.password_hash):
+#			raise HTTPException(
+#				status_code=status.HTTP_401_UNAUTHORIZED,
+#				detail="Incorrect username/email or password",
+#			)
+#		
+#		# Ensure account_type has a value (default to 'FREE' if None)
+#		account_type = account.account_type if account.account_type else "FREE"
+#		
+#		# Create access token
+#		access_token = create_access_token(
+#			data={"sub": str(account.account_id), "username": account.username}
+#		)
+#		
+#		return TokenResponse(
+#			access_token=access_token,
+#			token_type="bearer",
+#			account_id=str(account.account_id),
+#			username=account.username,
+#			account_type=account_type,
+#		)
+#	except HTTPException:
+#		# Re-raise HTTP exceptions as-is
+#		raise
+#	except Exception as e:
+#		# Log the full error for debugging
+#		logger.error(f"Login error: {str(e)}")
+#		logger.error(traceback.format_exc())
+#		# Return more detailed error in development
+#		error_detail = str(e)
+#		if hasattr(e, '__traceback__'):
+#			error_detail += f"\n{traceback.format_exc()}"
+#		raise HTTPException(
+#			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#			detail=f"Internal server error: {error_detail}",
+#		)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
