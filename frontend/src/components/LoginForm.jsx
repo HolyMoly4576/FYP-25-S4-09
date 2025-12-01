@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getRoles, loginUser } from "../services/authService";
+import { loginUser } from "../services/authService";
 import "../styles/LoginForm.css";
 
 function isEmail(str) {
@@ -11,36 +11,12 @@ function isEmail(str) {
 function LoginForm({ toggle }) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState([]);
-  const [selectedRole, setSelectedRole] = useState("");
+  const [selectedRole, setSelectedRole] = useState("USER"); // Default to USER
   const [formMessage, setFormMessage] = useState(""); // only for form validation/login
-  const [rolesError, setRolesError] = useState("");   // only for roles fetch
   const [showSuccessAlert, setShowSuccessAlert] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
-
-  useEffect(() => {
-    async function fetchRoles() {
-      try {
-        const data = await getRoles();
-        if (Array.isArray(data) && data.length > 0) {
-          setRoles(data);
-          setSelectedRole(data[0]);
-          setRolesError(""); // clear existing fetch error if successful
-        } else {
-          setRoles(["USER", "SYSADMIN"]);
-          setSelectedRole("USER");
-          setRolesError("No roles found. Using default options.");
-        }
-      } catch (err) {
-        setRoles(["USER", "SYSADMIN"]);
-        setSelectedRole("USER");
-        setRolesError("Could not fetch roles. Using defaults.");
-      }
-    }
-    fetchRoles();
-  }, []);
 
   // Helper: Validate identifier before submission
   const validate = () => {
@@ -54,10 +30,6 @@ function LoginForm({ toggle }) {
     }
     if (!password) {
       setFormMessage("Please enter your password.");
-      return false;
-    }
-    if (!selectedRole) {
-      setFormMessage("Please select your role.");
       return false;
     }
     setFormMessage("");
@@ -74,11 +46,11 @@ function LoginForm({ toggle }) {
       const response = await loginUser({
         username_or_email: identifier,
         password,
-        selected_role: selectedRole, // Send selected role for validation
+        selected_role: selectedRole, // Optional - for UI purposes, backend auto-determines
       });
       localStorage.setItem("username", identifier);
       // Use account_type from response (actual account type: FREE, PAID, or SYSADMIN)
-      const accountType = response.account_type || selectedRole;
+      const accountType = response.account_type;
       localStorage.setItem("role", accountType);
       setShowSuccessAlert(true);
       setTimeout(() => {
@@ -131,20 +103,14 @@ function LoginForm({ toggle }) {
             <select
               value={selectedRole}
               onChange={e => setSelectedRole(e.target.value)}
-              required
             >
-              {roles.map((role, idx) => (
-                <option key={idx} value={role}>
-                  {role === "USER" ? "User" : role === "SYSADMIN" ? "Sysadmin" : role}
-                </option>
-              ))}
+              <option value="USER">User</option>
+              <option value="SYSADMIN">Sysadmin</option>
             </select>
           </label>
           <button type="submit" disabled={loading}>
             {loading ? "Logging in..." : "Login"}
           </button>
-          {/* Only show fetch roles error if dropdown is empty */}
-          {rolesError && roles.length === 0 && <p className="response">{rolesError}</p>}
           {formMessage && <p className="response">{formMessage}</p>}
         </form>
         <button type="button" className="close-btn" onClick={toggle}>

@@ -7,7 +7,9 @@ class MasterNodeDB:
     """Database interface that connects to master node instead of direct database"""
     
     def __init__(self):
-        self.master_node_url = os.getenv("MASTER_NODE_URL", "http://master_node:3000")
+        # Default to localhost:8000 for local development (master node exposed on port 8000)
+        # In Docker, use MASTER_NODE_URL environment variable (http://master_node:3000)
+        self.master_node_url = os.getenv("MASTER_NODE_URL", "http://localhost:8000")
         self.query_endpoint = f"{self.master_node_url}/query"
     
     def execute_query(self, sql: str, params: List[Any] = None) -> Dict[str, Any]:
@@ -18,13 +20,23 @@ class MasterNodeDB:
                 "params": params or []
             }
             
-            response = requests.post(self.query_endpoint, json=payload)
+            response = requests.post(self.query_endpoint, json=payload, timeout=10)
             response.raise_for_status()
             
             return response.json()
         
+        except requests.exceptions.ConnectionError as e:
+            raise Exception(f"Failed to connect to master node at {self.master_node_url}. Is the master node running? Error: {str(e)}")
+        except requests.exceptions.Timeout as e:
+            raise Exception(f"Timeout connecting to master node at {self.master_node_url}. Error: {str(e)}")
         except requests.RequestException as e:
-            raise Exception(f"Failed to execute query on master node: {str(e)}")
+            error_detail = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json().get('error', error_detail)
+                except:
+                    error_detail = e.response.text or error_detail
+            raise Exception(f"Failed to execute query on master node: {error_detail}")
     
     def select(self, sql: str, params: List[Any] = None) -> List[Dict[str, Any]]:
         """Execute a SELECT query and return results"""

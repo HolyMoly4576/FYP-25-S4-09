@@ -22,7 +22,7 @@ oauth2_scheme = HTTPBearer()
 class LoginRequest(BaseModel):
 	username_or_email: str
 	password: str
-	selected_role: Optional[str] = None  # "USER" or "SYSADMIN" - used for validation
+	selected_role: Optional[str] = None  # Optional - for UI purposes, system auto-determines account type
 
 
 class RegisterRequest(BaseModel):
@@ -50,34 +50,44 @@ class UserResponse(BaseModel):
 
 def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, username_or_email: str) -> Optional[dict]:
 	"""Get account by username or email from master node database (PostgreSQL)."""
-	try:
-		# Query account table in master node database (PostgreSQL)
-		query = """
-		SELECT account_id, username, email, password_hash, account_type, created_at
-		FROM account 
-		WHERE username = $1 OR email = $2
-		"""
-		
-		result = master_db.select(query, [username_or_email, username_or_email])
-		
-		if result:
-			return result[0]  # Return first matching user
-		return None
-	except Exception as e:
-		logger.error(f"Error querying master node for user {username_or_email}: {str(e)}")
-		logger.error(f"Traceback: {traceback.format_exc()}")
-		return None
+	# Query account table in master node database (PostgreSQL)
+	query = """
+	SELECT account_id, username, email, password_hash, account_type, created_at
+	FROM account 
+	WHERE username = $1 OR email = $2
+	"""
+	
+	result = master_db.select(query, [username_or_email, username_or_email])
+	
+	if result:
+		return result[0]  # Return first matching user
+	return None
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: LoginRequest, master_db: MasterNodeDB = Depends(get_master_node_db)):
+def login(
+	login_data: LoginRequest, 
+	request: Request,
+	master_db: MasterNodeDB = Depends(get_master_node_db),
+	db: Session = Depends(get_db)
+):
 	"""
 	Login endpoint using master node database (PostgreSQL). Accepts username/email and password.
 	Returns JWT access token on successful authentication.
+	The system automatically determines the account type (FREE, PAID, or SYSADMIN) and redirects accordingly.
 	"""
 	try:
 		# Find account by username or email from master node (PostgreSQL)
-		account = get_account_by_username_or_email_master_node(master_db, login_data.username_or_email)
+		try:
+			account = get_account_by_username_or_email_master_node(master_db, login_data.username_or_email)
+		except Exception as e:
+			# Log the error for debugging
+			logger.error(f"Error querying master node for login: {str(e)}")
+			logger.error(f"Traceback: {traceback.format_exc()}")
+			raise HTTPException(
+				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+				detail=f"Database service unavailable. Please check if master node is running. Error: {str(e)}"
+			)
 		
 		if not account:
 			raise HTTPException(
@@ -95,47 +105,52 @@ def login(login_data: LoginRequest, master_db: MasterNodeDB = Depends(get_master
 		# Get account type (default to 'FREE' if None)
 		account_type = account.get("account_type", "FREE")
 		
-		# Validate selected_role against actual account type
-		# If selected_role is provided, validate it matches the account
-		if login_data.selected_role:
-			selected_role = login_data.selected_role.upper()
-			
-			# SYSADMIN accounts can only login with SYSADMIN role
-			if account_type == "SYSADMIN":
-				if selected_role != "SYSADMIN":
-					raise HTTPException(
-						status_code=status.HTTP_403_FORBIDDEN,
-						detail="SYSADMIN accounts must login with SYSADMIN role",
-					)
-			# FREE and PAID accounts can only login with USER role
-			elif account_type in ["FREE", "PAID"]:
-				if selected_role != "USER":
-					raise HTTPException(
-						status_code=status.HTTP_403_FORBIDDEN,
-						detail="Regular users must login with USER role",
-					)
+		# Validate account_id is a valid UUID string
+		account_id = account.get("account_id")
+		if not account_id:
+			raise HTTPException(
+				status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+				detail="Invalid account data: missing account_id"
+			)
+		
+		# Convert account_id to UUID if it's a string
+		try:
+			if isinstance(account_id, str):
+				account_id_uuid = uuid.UUID(account_id)
+			else:
+				account_id_uuid = account_id
+		except (ValueError, AttributeError) as e:
+			logger.error(f"Invalid account_id format: {account_id}, error: {str(e)}")
+			raise HTTPException(
+				status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+				detail=f"Invalid account data: account_id format error"
+			)
 		
 		# Create access token
 		access_token = create_access_token(
-			data={"sub": account["account_id"], "username": account["username"]}
+			data={"sub": str(account_id_uuid), "username": account["username"]}
 		)
 		
 		# Log login activity
-		log_activity(
-			db=db,
-			account_id=account.account_id,
-			action_type="LOGIN",
-			resource_type="ACCOUNT",
-			resource_id=account.account_id,
-			ip_address=get_client_ip(request),
-			user_agent=get_user_agent(request),
-			details={"username": account.username, "account_type": account_type}
-		)
+		try:
+			log_activity(
+				db=db,
+				account_id=account_id_uuid,
+				action_type="LOGIN",
+				resource_type="ACCOUNT",
+				resource_id=account_id_uuid,
+				ip_address=get_client_ip(request),
+				user_agent=get_user_agent(request),
+				details={"username": account["username"], "account_type": account_type}
+			)
+		except Exception as e:
+			# Log activity logging errors but don't fail the login
+			logger.warning(f"Failed to log login activity: {str(e)}")
 		
 		return TokenResponse(
 			access_token=access_token,
 			token_type="bearer",
-			account_id=account["account_id"],
+			account_id=str(account_id_uuid),
 			username=account["username"],
 			account_type=account_type
 		)
@@ -144,11 +159,21 @@ def login(login_data: LoginRequest, master_db: MasterNodeDB = Depends(get_master
 		# Re-raise HTTP exceptions as-is
 		raise
 	except Exception as e:
-		logger.error(f"Login error: {str(e)}")
+		# Log the full error for debugging
+		error_msg = str(e)
+		logger.error(f"Login error: {error_msg}")
 		logger.error(f"Traceback: {traceback.format_exc()}")
+		
+		# Return more detailed error in development, generic in production
+		import os
+		if os.getenv("DEBUG", "false").lower() == "true" or os.getenv("TESTING") == "1":
+			detail = f"Internal server error during login: {error_msg}"
+		else:
+			detail = "Internal server error during login. Please check server logs."
+		
 		raise HTTPException(
 			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="Internal server error during login"
+			detail=detail
 		)
 
 # Keep the old login route as backup (commented out)

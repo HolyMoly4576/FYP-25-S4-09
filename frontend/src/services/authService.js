@@ -10,7 +10,8 @@ export async function loginUser(credentials) {
     const result = await response.json();
 
     if (!response.ok) {
-        throw new Error(result.message || "Login failed");
+        // FastAPI returns errors in 'detail' field, not 'message'
+        throw new Error(result.detail || result.message || "Login failed");
     }
 
     return result;
