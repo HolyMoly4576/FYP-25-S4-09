@@ -60,7 +60,7 @@ function LoginForm({ toggle }) {
           navigate("/Admin/Admin-Dashboard");
         } else {
           // FREE and PAID both go to user dashboard
-          navigate("/User/User-Dashboard");
+          navigate("/user-dashboard");
         }
         toggle && toggle();
       }, 1200);
