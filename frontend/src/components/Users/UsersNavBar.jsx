@@ -1,15 +1,17 @@
 import React, { useState } from "react";
+import { NavLink } from "react-router-dom";
 import { Link, useNavigate } from "react-router-dom";
 import ShardLogo from "../Shard_Logo.png";
 import { getCurrentUser, clearAuth } from "../../services/UserService";
 import "../../styles/Users/UsersNavBar.css";
 
-const UsersNavBar = ({ storageUsage, loadingUsage, usageError }) => {
+const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
   const navigate = useNavigate();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const user = getCurrentUser();
-  const username = user?.username || "User";
+  const username = user?.username;
 
   const handleLogout = () => {
     clearAuth();
@@ -20,17 +22,27 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError }) => {
     setIsDropdownOpen((prev) => !prev);
   };
 
+  const toggleSidebar = () => {
+    setIsSidebarOpen((prev) => !prev);
+  };
+
+  const closeSidebar = () => {
+    setIsSidebarOpen(false);
+  };
+
   return (
-    <div className="users-layout">
+    <div className={`users-layout ${isSidebarOpen ? "sidebar-open" : ""}`}>
       {/* Left sidebar */}
       <aside className="users-sidebar">
         <div className="sidebar-logo">
           <img src={ShardLogo} alt="Shard Logo" />
         </div>
 
-        <nav className="sidebar-nav">
-          <Link to="/dashboard/files" className="sidebar-link">
+        <nav className="sidebar-nav" onClick={closeSidebar}>
+          <Link to="/user-dashboard" className="sidebar-link">
+          <NavLink to="/user-dashboard" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             All Files
+          </NavLink>  
           </Link>
           <Link to="/dashboard/shared" className="sidebar-link">
             Shared
@@ -50,7 +62,7 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError }) => {
           )}
           {!loadingUsage && !usageError && storageUsage && (
             <span className="storage-value">
-              {storageUsage.percentUsed}% used
+              {storageUsage.used_gb} GB of {storageUsage.storage_limit_gb} GB used
             </span>
           )}
         </div>
@@ -58,12 +70,22 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError }) => {
 
       {/* Top header bar */}
       <header className="users-header">
-        <div className="header-left" />
+        <div className="header-left">
+          {/* Hamburger for mobile */}
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={toggleSidebar}
+          >
+            ☰
+          </button>
+        </div>
 
         <div className="header-right">
           <div className="user-dropdown-wrapper">
             <button
               className="user-dropdown-toggle"
+              type="button"
               onClick={toggleDropdown}
             >
               Welcome, {username}
@@ -88,15 +110,15 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError }) => {
             )}
           </div>
 
-          <button className="logout-button" onClick={handleLogout}>
-            Logout
+          <button className="logout-button" type="button" onClick={handleLogout}>
+            Log out
           </button>
         </div>
       </header>
 
       {/* Main content area placeholder */}
       <main className="users-main-content">
-        {/* Your routed content (e.g. <Outlet /> or props.children) */}
+        {children}
       </main>
     </div>
   );

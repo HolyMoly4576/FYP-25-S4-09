@@ -38,16 +38,13 @@ const UserLayout = () => {
   }, []);
 
   return (
-    <div className="user-layout">
-      <UsersNavBar
-        storageUsage={storageUsage}
-        loadingUsage={loadingUsage}
-        usageError={usageError}
-      />
-      <main className="user-main-content">
-        <Outlet />
-      </main>
-    </div>
+    <UsersNavBar
+      storageUsage={storageUsage}
+      loadingUsage={loadingUsage}
+      usageError={usageError}
+    >
+      <Outlet />
+    </UsersNavBar>
   );
 };
 
