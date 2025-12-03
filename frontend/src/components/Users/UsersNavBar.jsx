@@ -39,11 +39,9 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
         </div>
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
-          <Link to="/user-dashboard" className="sidebar-link">
           <NavLink to="/user-dashboard" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             All Files
           </NavLink>  
-          </Link>
           <Link to="/dashboard/shared" className="sidebar-link">
             Shared
           </Link>
@@ -88,7 +86,7 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
               type="button"
               onClick={toggleDropdown}
             >
-              Welcome, {username}
+              Welcome, {username} ⏷
             </button>
             {isDropdownOpen && (
               <div className="user-dropdown-menu">
