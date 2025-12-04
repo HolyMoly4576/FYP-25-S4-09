@@ -8,6 +8,10 @@ import hashlib
 import requests
 import os
 import json
+import traceback
+
+# Import Reed-Solomon erasure coding
+from app.core.erasure_coding import get_erasure_coder_for_account, get_erasure_coder_for_profile
 
 # Remove SQLAlchemy dependencies since we're using master node API
 from app.core.security import decode_access_token
@@ -53,7 +57,7 @@ def get_current_account_from_master(token: str):
         
         # Query master node for account info using account_id
         response = requests.post(f"{MASTER_NODE_URL}/query", json={
-            "sql": "SELECT account_id, username, email, account_type, created_at FROM account WHERE account_id = ?",
+            "sql": "SELECT account_id, username, email, account_type, created_at FROM ACCOUNT WHERE account_id = $1",
             "params": [account_id]
         })
         
@@ -61,7 +65,7 @@ def get_current_account_from_master(token: str):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Master node error")
         
         result = response.json()
-        if not result.get("success") or not result.get("data"):
+        if not result.get("success") or not result.get("data") or len(result.get("data")) == 0:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
         
         return result["data"][0]  # Return first account record
@@ -107,43 +111,40 @@ def upload_file(
         
         # Create file metadata
         response = requests.post(f"{MASTER_NODE_URL}/files", json=create_file_payload)
-        if response.status_code != 200:
-            logger.error(f"Failed to create file metadata: {response.text}")
+        if response.status_code not in [200, 201]:
+            logger.error(f"Failed to create file metadata: Status {response.status_code}, Response: {response.text}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create file metadata"
+                detail=f"Failed to create file metadata: {response.text}"
             )
         
         file_metadata = response.json()
         file_id = file_metadata["fileId"]
         version_id = file_metadata["versionId"]
         
-        # Get erasure profile
-        erasure_response = requests.get(f"{MASTER_NODE_URL}/erasure-profiles/{upload_data.erasure_id}")
-        if erasure_response.status_code != 200:
-            logger.error(f"Failed to get erasure profile: {erasure_response.text}")
+        # Get erasure profile and initialize Reed-Solomon encoder
+        # Always use the explicitly requested profile to respect user choice
+        erasure_coder = get_erasure_coder_for_profile(upload_data.erasure_id)
+        profile_info = erasure_coder.get_fragment_info()
+        k_fragments = profile_info["k"]
+        m_fragments = profile_info["m"]
+        total_fragments = profile_info["n"]
+        logger.info(f"Using requested Reed-Solomon profile {upload_data.erasure_id}: {k_fragments}+{m_fragments}={total_fragments} fragments")
+        
+        # Encode file data using Reed-Solomon
+        try:
+            fragments = erasure_coder.encode_data(file_data)
+            logger.info(f"Reed-Solomon encoding produced {len(fragments)} fragments from {len(file_data)} bytes")
+        except Exception as e:
+            logger.error(f"Reed-Solomon encoding failed: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to get erasure profile"
+                detail=f"Erasure coding failed: {str(e)}"
             )
         
-        erasure_profile = erasure_response.json()
-        k_fragments = erasure_profile["k"]  # Data fragments
-        m_fragments = erasure_profile["m"]  # Parity fragments
-        total_fragments = k_fragments + m_fragments
-        fragment_size = erasure_profile["bytes"]
-        
-        # Simple fragmentation (in production, use proper erasure coding)
-        fragments = []
+        # Prepare fragment data for distribution
         fragment_data_list = []
-        
-        # Split file into k data fragments
-        data_per_fragment = len(file_data) // k_fragments
-        for i in range(k_fragments):
-            start = i * data_per_fragment
-            end = start + data_per_fragment if i < k_fragments - 1 else len(file_data)
-            fragment_data = file_data[start:end]
-            
+        for i, fragment_data in enumerate(fragments):
             fragment_info = {
                 "num_fragment": i,
                 "bytes": len(fragment_data),
@@ -152,14 +153,7 @@ def upload_file(
             }
             fragment_data_list.append(fragment_info)
         
-        # TODO: Generate parity fragments using Reed-Solomon coding
-        # For now, just duplicate some data fragments as simple redundancy
-        for i in range(m_fragments):
-            source_fragment = fragment_data_list[i % k_fragments].copy()
-            source_fragment["num_fragment"] = k_fragments + i
-            fragment_data_list.append(source_fragment)
-        
-        # Distribute fragments via master node
+        # First, get distribution plan from master node
         fragment_payload = {
             "version_id": version_id,
             "segment_id": str(uuid.uuid4()),  # Single segment for now
@@ -168,52 +162,71 @@ def upload_file(
         }
         
         distribute_response = requests.post(f"{MASTER_NODE_URL}/file-fragments", json=fragment_payload)
-        if distribute_response.status_code != 200:
-            logger.error(f"Failed to distribute fragments: {distribute_response.text}")
+        if distribute_response.status_code not in [200, 201]:
+            logger.error(f"Failed to get distribution plan: Status {distribute_response.status_code}, Response: {distribute_response.text}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to distribute file fragments"
+                detail=f"Failed to get fragment distribution plan: {distribute_response.text}"
             )
         
         distribution_result = distribute_response.json()
-        distributed_fragments = distribution_result["fragments"]
         
-        # Store actual fragment data on storage nodes
+        if not distribution_result.get("success", False):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Master node failed to create distribution plan"
+            )
+        
+        distributed_fragments = distribution_result.get("fragments", [])
+        
+        # Now actually store fragment data on storage nodes
         fragments_stored = 0
-        for i, fragment_info in enumerate(fragment_data_list):
-            if i >= len(distributed_fragments):
-                break
-                
-            dist_info = distributed_fragments[i]
+        for i, fragment_plan in enumerate(distributed_fragments):
             try:
-                # Send fragment data to assigned storage node
-                storage_payload = {
-                    "fragmentId": dist_info["fragmentId"],
-                    "data": fragment_info["data"],
+                # Get the corresponding fragment data
+                fragment_info = fragment_data_list[i]
+                
+                # Map internal Docker endpoints to host ports
+                node_endpoint = fragment_plan["nodeEndpoint"]
+                
+                # Use internal Docker network endpoint directly since FastAPI runs in Docker
+                # Example: http://storage_node_1:3000 (keep as-is for Docker network)
+                storage_url = node_endpoint
+                
+                fragment_id = fragment_plan["fragmentId"]
+                
+                # Prepare fragment data for storage node
+                fragment_payload = {
+                    "fragmentId": fragment_id,
+                    "data": fragment_info["data"],  # base64 encoded data
+                    "contentHash": fragment_info["content_hash"],
                     "bytes": fragment_info["bytes"],
-                    "contentHash": fragment_info["content_hash"]
+                    "fileId": file_id,  # Add file ID for master node notification
+                    "fragmentOrder": fragment_info["num_fragment"]
                 }
                 
-                store_response = requests.post(
-                    f"{dist_info['nodeEndpoint']}/fragments",
-                    json=storage_payload,
-                    timeout=30
-                )
+                # Store fragment on storage node using correct endpoint
+                logger.info(f"Storing fragment {fragment_id} on {storage_url}")
+                
+                store_response = requests.post(f"{storage_url}/fragments", json=fragment_payload, timeout=30)
                 
                 if store_response.status_code in [200, 201]:
                     fragments_stored += 1
-                    logger.info(f"Fragment {dist_info['fragmentId']} stored on node {dist_info['nodeId']}")
+                    logger.info(f"✅ Fragment {fragment_id} stored successfully on {storage_url}")
                 else:
-                    logger.error(f"Failed to store fragment {dist_info['fragmentId']}: {store_response.text}")
+                    logger.error(f"❌ Failed to store fragment {fragment_id} on {storage_url}: Status {store_response.status_code}, Response: {store_response.text}")
                     
             except Exception as e:
-                logger.error(f"Error storing fragment {dist_info['fragmentId']}: {e}")
+                logger.error(f"❌ Exception storing fragment {i}: {e}")
+                continue
         
-        upload_status = "complete" if fragments_stored == len(fragment_data_list) else "partial"
+        total_fragments_expected = len(fragment_data_list)
+        
+        upload_status = "complete" if fragments_stored == total_fragments_expected else "partial"
         if fragments_stored == 0:
             upload_status = "failed"
         
-        logger.info(f"File upload completed: {upload_data.filename}, fragments: {fragments_stored}/{len(fragment_data_list)}")
+        logger.info(f"File upload completed via master node: {upload_data.filename}, fragments: {fragments_stored}/{total_fragments_expected}")
         
         return FileUploadResponse(
             file_id=file_id,
@@ -230,6 +243,7 @@ def upload_file(
         raise
     except Exception as e:
         logger.error(f"Error uploading file: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error uploading file: {str(e)}"

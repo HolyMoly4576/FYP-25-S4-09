@@ -10,46 +10,153 @@ app.use(express.json());
 // PostgreSQL connection pool
 let pool;
 
-// Initialize PostgreSQL database connection
-try {
-    const connectionString = process.env.DATABASE_URL || 
-        `postgresql://${process.env.POSTGRES_USER || 'user'}:${process.env.POSTGRES_PASSWORD || 'password'}@${process.env.POSTGRES_HOST || 'postgres_db'}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB || 'database'}`;
-    
-    pool = new Pool({
-        connectionString: connectionString,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-    });
-    
-    console.log('Connected to PostgreSQL database');
-    
-    // Test connection
-    pool.query('SELECT NOW()', (err, res) => {
-        if (err) {
-            console.error('Error connecting to PostgreSQL:', err);
-            process.exit(1);
-        } else {
-            console.log('PostgreSQL connection successful:', res.rows[0]);
+// Initialize PostgreSQL database connection with enhanced configuration
+async function initializeDatabase() {
+    try {
+        const connectionString = process.env.DATABASE_URL || 
+            `postgresql://${process.env.POSTGRES_USER || 'user'}:${process.env.POSTGRES_PASSWORD || 'password'}@${process.env.POSTGRES_HOST || 'postgres_db'}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB || 'database'}`;
+        
+        pool = new Pool({
+            connectionString: connectionString,
+            max: 25, // Increased pool size for better concurrency
+            min: 5,  // Minimum connections to maintain
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 5000, // Increased timeout
+            acquireTimeoutMillis: 60000,
+            createTimeoutMillis: 30000,
+            destroyTimeoutMillis: 5000,
+            reapIntervalMillis: 1000,
+            createRetryIntervalMillis: 100,
+            propagateCreateError: false,
+        });
+        
+        console.log('Master Node: Initializing PostgreSQL connection...');
+        console.log('Connection String:', connectionString.replace(/password=[^&\s]+/, 'password=***'));
+        
+        // Test connection with retry logic
+        let retries = 5;
+        while (retries > 0) {
+            try {
+                const testResult = await pool.query('SELECT NOW() as current_time, version() as pg_version');
+                console.log('PostgreSQL connection successful!');
+                console.log('Current time:', testResult.rows[0].current_time);
+                console.log('PostgreSQL version:', testResult.rows[0].pg_version.split(' ')[0]);
+                break;
+            } catch (err) {
+                retries--;
+                if (retries === 0) {
+                    throw err;
+                }
+                console.log(`Connection failed, retrying... (${retries} attempts left)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
         }
-    });
-    
-} catch (error) {
-    console.error('Error initializing PostgreSQL connection:', error);
-    process.exit(1);
+        
+        // Set up connection monitoring
+        pool.on('connect', () => {
+            console.log('New PostgreSQL client connected');
+        });
+        
+        pool.on('error', (err) => {
+            console.error('PostgreSQL pool error:', err);
+        });
+        
+        return pool;
+        
+    } catch (error) {
+        console.error('Error initializing PostgreSQL connection:', error);
+        process.exit(1);
+    }
 }
 
-// Helper function to execute queries
-async function query(text, params) {
+// Enhanced helper function to execute queries with better error handling and logging
+async function query(text, params = [], options = {}) {
     const start = Date.now();
+    const client = options.client || null; // Allow using specific client for transactions
+    
     try {
-        const res = await pool.query(text, params);
+        let result;
+        
+        if (client) {
+            // Use provided client (for transactions)
+            result = await client.query(text, params);
+        } else {
+            // Use pool for regular queries
+            result = await pool.query(text, params);
+        }
+        
         const duration = Date.now() - start;
-        console.log('Executed query', { text, duration, rows: res.rowCount });
-        return res;
+        
+        // Log query execution (only log first 100 chars of SQL for security)
+        const sqlPreview = text.length > 100 ? text.substring(0, 100) + '...' : text;
+        console.log(`SQL executed successfully: ${sqlPreview} | Duration: ${duration}ms | Rows: ${result.rowCount || 0}`);
+        
+        return result;
+        
     } catch (error) {
-        console.error('Query error:', error);
+        const duration = Date.now() - start;
+        console.error(`SQL execution error after ${duration}ms:`, {
+            sql: text.substring(0, 100),
+            params: params,
+            error: error.message,
+            code: error.code,
+            detail: error.detail
+        });
         throw error;
+    }
+}
+
+// Transaction helper function
+async function withTransaction(callback) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        console.log('Transaction started');
+        
+        const result = await callback(client);
+        
+        await client.query('COMMIT');
+        console.log('Transaction committed');
+        
+        return result;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.log('Transaction rolled back due to error:', error.message);
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+// Database health check function
+async function checkDatabaseHealth() {
+    try {
+        const result = await query('SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = $1', ['public']);
+        const tableCount = parseInt(result.rows[0].table_count);
+        
+        if (tableCount === 0) {
+            console.warn('Warning: No tables found in public schema. Database may not be initialized.');
+            return { healthy: false, reason: 'No tables found' };
+        }
+        
+        // Check if critical tables exist
+        const criticalTables = ['account', 'node', 'file_objects'];
+        for (const table of criticalTables) {
+            const tableExists = await query(
+                'SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2)',
+                ['public', table]
+            );
+            
+            if (!tableExists.rows[0].exists) {
+                console.warn(`Critical table '${table}' not found`);
+                return { healthy: false, reason: `Missing table: ${table}` };
+            }
+        }
+        
+        return { healthy: true, tables: tableCount };
+    } catch (error) {
+        console.error('Database health check failed:', error);
+        return { healthy: false, reason: error.message };
     }
 }
 
@@ -161,14 +268,38 @@ async function updateCapacity() {
 }
 
 // API endpoints
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'Healthy',
-        nodeId: NODE_ID,
-        hostname: NODE_HOSTNAME,
-        role: NODE_ROLE,
-        database: 'PostgreSQL'
-    });
+// Enhanced health endpoint with database status
+app.get('/health', async (req, res) => {
+    try {
+        const dbHealth = await checkDatabaseHealth();
+        const poolStatus = {
+            total: pool.totalCount,
+            idle: pool.idleCount,
+            waiting: pool.waitingCount
+        };
+        
+        res.json({
+            status: dbHealth.healthy ? 'Healthy' : 'Unhealthy',
+            nodeId: NODE_ID,
+            hostname: NODE_HOSTNAME,
+            role: NODE_ROLE,
+            database: {
+                type: 'PostgreSQL',
+                healthy: dbHealth.healthy,
+                tables: dbHealth.tables || 0,
+                reason: dbHealth.reason || 'OK'
+            },
+            connection_pool: poolStatus,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Health check error:', error);
+        res.status(500).json({
+            status: 'Error',
+            nodeId: NODE_ID,
+            error: error.message
+        });
+    }
 });
 
 // Storage nodes register with master node
@@ -277,34 +408,97 @@ app.get('/nodes', async (req, res) => {
     }
 });
 
-// Database query endpoint for backend (now just a passthrough since we all use PostgreSQL)
+// Enhanced database query endpoint with better error handling and security
 app.post('/query', async (req, res) => {
     try {
-        const { sql, params = [] } = req.body;
+        const { sql, params = [], transaction = false } = req.body;
         
-        console.log('Received query request:');
+        console.log('=== Master Node Query Request ===');
         console.log('SQL:', sql);
         console.log('Params:', params);
+        console.log('Transaction:', transaction);
         
         if (!sql) {
             return res.status(400).json({ error: 'SQL query required' });
         }
         
-        // Basic safety check - only allow SELECT, INSERT, UPDATE, DELETE
+        // Enhanced security check with more comprehensive validation
         const sqlLower = sql.trim().toLowerCase();
-        if (!sqlLower.startsWith('select') && 
-            !sqlLower.startsWith('insert') && 
-            !sqlLower.startsWith('update') && 
-            !sqlLower.startsWith('delete')) {
-            return res.status(400).json({ error: 'Only SELECT, INSERT, UPDATE, DELETE queries allowed' });
+        const allowedOperations = ['select', 'insert', 'update', 'delete'];
+        const isAllowedOperation = allowedOperations.some(op => sqlLower.startsWith(op));
+        
+        if (!isAllowedOperation) {
+            console.warn('Blocked unauthorized SQL operation:', sqlLower.substring(0, 50));
+            return res.status(400).json({ 
+                error: 'Only SELECT, INSERT, UPDATE, DELETE operations allowed',
+                received_operation: sqlLower.split(' ')[0]
+            });
         }
         
-        const result = await query(sql, params);
+        // Block potentially dangerous operations
+        const dangerousPatterns = [
+            'drop table', 'drop database', 'alter table', 'create table',
+            'truncate', 'grant', 'revoke', 'create user', 'drop user'
+        ];
         
-        res.json({ success: true, data: result.rows || result });
+        for (const pattern of dangerousPatterns) {
+            if (sqlLower.includes(pattern)) {
+                console.warn('Blocked dangerous SQL pattern:', pattern);
+                return res.status(400).json({ 
+                    error: 'Dangerous SQL operation detected',
+                    pattern: pattern
+                });
+            }
+        }
+        
+        let result;
+        
+        if (transaction) {
+            // Execute within transaction
+            result = await withTransaction(async (client) => {
+                return await query(sql, params, { client });
+            });
+        } else {
+            // Execute as single query
+            result = await query(sql, params);
+        }
+        
+        console.log('Query executed successfully. Rows returned:', result.rows.length);
+        
+        res.json({ 
+            success: true, 
+            data: result.rows,
+            rowCount: result.rowCount,
+            command: result.command 
+        });
+        
     } catch (error) {
-        console.error('Error executing query:', error);
-        res.status(500).json({ error: 'Database query error', details: error.message });
+        console.error('=== Database Query Error ===');
+        console.error('Error:', error.message);
+        console.error('Code:', error.code);
+        console.error('Detail:', error.detail);
+        
+        // Provide more specific error information
+        let errorResponse = {
+            success: false,
+            error: 'Database query error',
+            details: error.message
+        };
+        
+        // Add specific error codes for common issues
+        if (error.code === '23505') { // Unique violation
+            errorResponse.error = 'Duplicate entry violation';
+            errorResponse.constraint = error.constraint;
+        } else if (error.code === '23503') { // Foreign key violation
+            errorResponse.error = 'Foreign key constraint violation';
+            errorResponse.constraint = error.constraint;
+        } else if (error.code === '42P01') { // Table doesn't exist
+            errorResponse.error = 'Table does not exist';
+        } else if (error.code === '42703') { // Column doesn't exist
+            errorResponse.error = 'Column does not exist';
+        }
+        
+        res.status(500).json(errorResponse);
     }
 });
 
@@ -374,7 +568,7 @@ app.get('/fragments/:fileId', async (req, res) => {
     }
 });
 
-// Master node status
+// Enhanced master node status with comprehensive database information
 app.get('/status', async (req, res) => {
     try {
         const nodeResult = await query(`
@@ -386,54 +580,466 @@ app.get('/status', async (req, res) => {
         
         const nodeInfo = nodeResult.rows[0];
         
-        const accountsResult = await query('SELECT COUNT(*) as count FROM account');
-        const filesResult = await query('SELECT COUNT(*) as count FROM file_objects');
-        const fragmentsResult = await query('SELECT COUNT(*) as count FROM file_fragments');
-        const nodesResult = await query(`SELECT COUNT(*) as count FROM node WHERE node_role = 'STORAGE' AND is_active = true`);
+        // Get comprehensive statistics
+        const [accountsResult, filesResult, fragmentsResult, nodesResult, activeNodesResult] = await Promise.all([
+            query('SELECT COUNT(*) as count FROM account'),
+            query('SELECT COUNT(*) as count FROM file_objects'),
+            query('SELECT COUNT(*) as count FROM file_fragments'),
+            query(`SELECT COUNT(*) as count FROM node WHERE node_role = 'STORAGE'`),
+            query(`SELECT COUNT(*) as count FROM node WHERE node_role = 'STORAGE' AND is_active = true`)
+        ]);
+        
+        const dbHealth = await checkDatabaseHealth();
         
         const stats = {
             accounts: parseInt(accountsResult.rows[0].count),
             files: parseInt(filesResult.rows[0].count),
             fragments: parseInt(fragmentsResult.rows[0].count),
-            storage_nodes: parseInt(nodesResult.rows[0].count)
+            total_storage_nodes: parseInt(nodesResult.rows[0].count),
+            active_storage_nodes: parseInt(activeNodesResult.rows[0].count)
         };
         
         res.json({
-            master_node: nodeInfo,
+            master_node: {
+                ...nodeInfo,
+                uptime_seconds: Math.floor(process.uptime()),
+                memory_usage: process.memoryUsage(),
+                node_version: process.version
+            },
             database: {
                 type: 'PostgreSQL',
-                status: 'active',
-                schema_version: 'complete'
+                healthy: dbHealth.healthy,
+                status: dbHealth.healthy ? 'active' : 'inactive',
+                tables: dbHealth.tables || 0,
+                schema_version: 'complete',
+                connection_pool: {
+                    total: pool.totalCount,
+                    idle: pool.idleCount,
+                    waiting: pool.waitingCount
+                }
             },
-            statistics: stats
+            statistics: stats,
+            last_updated: new Date().toISOString()
         });
     } catch (error) {
         console.error('Error retrieving status:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 });
 
-process.on('SIGTERM', async () => {
-    console.log('Shutting down master node...');
+// Database statistics endpoint
+app.get('/db/stats', async (req, res) => {
     try {
-        await query('UPDATE node SET is_active = false WHERE node_id = $1', [NODE_ID]);
-        await pool.end();
+        // Get table sizes and row counts
+        const tableStatsQuery = `
+            SELECT 
+                schemaname,
+                tablename,
+                attname,
+                n_distinct,
+                correlation
+            FROM pg_stats 
+            WHERE schemaname = 'public'
+            ORDER BY tablename, attname;
+        `;
+        
+        const tableSizesQuery = `
+            SELECT 
+                table_name,
+                pg_size_pretty(pg_total_relation_size(quote_ident(table_name))) as size,
+                pg_relation_size(quote_ident(table_name)) as size_bytes
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            ORDER BY pg_relation_size(quote_ident(table_name)) DESC;
+        `;
+        
+        const [tableStats, tableSizes] = await Promise.all([
+            query(tableStatsQuery),
+            query(tableSizesQuery)
+        ]);
+        
+        res.json({
+            table_statistics: tableStats.rows,
+            table_sizes: tableSizes.rows,
+            total_database_size: await query("SELECT pg_size_pretty(pg_database_size(current_database())) as size")
+                .then(result => result.rows[0].size)
+        });
     } catch (error) {
-        console.error('Error shutting down master node:', error);
+        console.error('Error retrieving database statistics:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
     }
-    process.exit(0);
+});
+
+// Batch query endpoint for multiple operations
+app.post('/query/batch', async (req, res) => {
+    try {
+        const { queries, transaction = true } = req.body;
+        
+        if (!Array.isArray(queries) || queries.length === 0) {
+            return res.status(400).json({ error: 'Queries array is required and must not be empty' });
+        }
+        
+        console.log(`Executing batch of ${queries.length} queries, transaction: ${transaction}`);
+        
+        if (transaction) {
+            // Execute all queries in a single transaction
+            const results = await withTransaction(async (client) => {
+                const batchResults = [];
+                for (let i = 0; i < queries.length; i++) {
+                    const { sql, params = [] } = queries[i];
+                    console.log(`Batch query ${i + 1}/${queries.length}: ${sql.substring(0, 50)}...`);
+                    
+                    const result = await query(sql, params, { client });
+                    batchResults.push({
+                        index: i,
+                        success: true,
+                        data: result.rows,
+                        rowCount: result.rowCount
+                    });
+                }
+                return batchResults;
+            });
+            
+            res.json({ success: true, results, transaction: true });
+        } else {
+            // Execute queries individually
+            const results = [];
+            for (let i = 0; i < queries.length; i++) {
+                try {
+                    const { sql, params = [] } = queries[i];
+                    const result = await query(sql, params);
+                    results.push({
+                        index: i,
+                        success: true,
+                        data: result.rows,
+                        rowCount: result.rowCount
+                    });
+                } catch (error) {
+                    results.push({
+                        index: i,
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            
+            res.json({ success: true, results, transaction: false });
+        }
+        
+    } catch (error) {
+        console.error('Batch query error:', error);
+        res.status(500).json({ error: 'Batch query error', details: error.message });
+    }
+});
+
+// File metadata creation endpoint
+app.post('/files', async (req, res) => {
+    try {
+        const { account_id, file_name, file_size, logical_path, erasure_id } = req.body;
+        
+        if (!account_id || !file_name || !file_size || !logical_path) {
+            return res.status(400).json({ error: 'Missing required fields: account_id, file_name, file_size, logical_path' });
+        }
+        
+        const fileId = uuidv4();
+        const versionId = uuidv4();
+        
+        // Create FILE_OBJECTS entry
+        await query(`
+            INSERT INTO FILE_OBJECTS (FILE_ID, ACCOUNT_ID, FILE_NAME, FILE_SIZE, LOGICAL_PATH, UPLOADED_AT)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+        `, [fileId, account_id, file_name, file_size, logical_path]);
+        
+        // Create FILE_VERSIONS entry - using BYTES instead of FILE_SIZE
+        await query(`
+            INSERT INTO FILE_VERSIONS (VERSION_ID, FILE_ID, ERASURE_ID, BYTES, CONTENT_HASH, UPLOADED_AT)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+        `, [versionId, fileId, erasure_id || 'MEDIUM', file_size, 'pending_hash']);
+        
+        res.json({ 
+            success: true, 
+            fileId: fileId, 
+            versionId: versionId, 
+            message: 'File metadata created successfully' 
+        });
+    } catch (error) {
+        console.error('Error creating file metadata:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// File fragment distribution endpoint
+app.post('/file-fragments', async (req, res) => {
+    try {
+        const { version_id, segment_id, fragment_data, erasure_id } = req.body;
+        
+        if (!version_id || !segment_id || !fragment_data || !Array.isArray(fragment_data)) {
+            return res.status(400).json({ error: 'Missing required fields: version_id, segment_id, fragment_data (array)' });
+        }
+        
+        // Create FILE_SEGMENTS entry
+        await query(`
+            INSERT INTO FILE_SEGMENTS (SEGMENT_ID, VERSION_ID, ERASURE_ID, NUM_SEGMENT, BYTES, CONTENT_HASH, STORED_AT)
+            VALUES ($1, $2, $3, 0, $4, $5, NOW())
+        `, [segment_id, version_id, erasure_id || 'MEDIUM', 
+            fragment_data.reduce((total, frag) => total + frag.bytes, 0), 'pending']);
+        
+        // Get available storage nodes
+        const nodesResult = await query(`
+            SELECT NODE_ID, API_ENDPOINT, HOSTNAME 
+            FROM NODE 
+            WHERE NODE_ROLE = 'STORAGE' AND IS_ACTIVE = true 
+            ORDER BY random() 
+            LIMIT $1
+        `, [fragment_data.length]);
+        
+        if (nodesResult.rows.length < fragment_data.length) {
+            return res.status(503).json({ 
+                error: 'Insufficient storage nodes', 
+                available: nodesResult.rows.length, 
+                required: fragment_data.length 
+            });
+        }
+        
+        const distributedFragments = [];
+        
+        // Create fragments and assign to nodes
+        for (let i = 0; i < fragment_data.length; i++) {
+            const fragment = fragment_data[i];
+            const node = nodesResult.rows[i];
+            const fragmentId = uuidv4();
+            
+            // Insert into FILE_FRAGMENTS
+            await query(`
+                INSERT INTO FILE_FRAGMENTS (FRAGMENT_ID, SEGMENT_ID, NUM_FRAGMENT, BYTES, CONTENT_HASH, STORED_AT)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+            `, [fragmentId, segment_id, fragment.num_fragment, fragment.bytes, fragment.content_hash]);
+            
+            // Insert into FRAGMENT_LOCATION
+            const fragmentPath = `/data/storage_node_${node.hostname}/fragment_${fragmentId}.bin`;
+            await query(`
+                INSERT INTO FRAGMENT_LOCATION (FRAGMENT_ID, NODE_ID, FRAGMENT_ADDRESS, BYTES, STATUS, STORED_AT, LAST_CHECKED_AT)
+                VALUES ($1, $2, $3, $4, 'ACTIVE', NOW(), NOW())
+            `, [fragmentId, node.node_id, fragmentPath, fragment.bytes]);
+            
+            distributedFragments.push({
+                fragmentId: fragmentId,
+                nodeId: node.node_id,
+                nodeEndpoint: node.api_endpoint,
+                fragmentOrder: fragment.num_fragment,
+                bytes: fragment.bytes
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            fragments: distributedFragments,
+            message: 'Fragment distribution planned successfully'
+        });
+    } catch (error) {
+        console.error('Error distributing fragments:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// Erasure profiles endpoint
+app.get('/erasure-profiles/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Query database for erasure profile
+        const result = await query(
+            'SELECT erasure_id, k, m, bytes, notes FROM erasure_profile WHERE UPPER(erasure_id) = UPPER($1)',
+            [id]
+        );
+        
+        if (result.rows.length === 0) {
+            // Get available profiles for error message
+            const availableResult = await query('SELECT erasure_id FROM erasure_profile ORDER BY erasure_id');
+            const available = availableResult.rows.map(row => row.erasure_id);
+            return res.status(404).json({ 
+                error: 'Erasure profile not found', 
+                available: available 
+            });
+        }
+        
+        const profile = result.rows[0];
+        
+        res.json({
+            success: true,
+            profile_id: profile.erasure_id,
+            k: parseInt(profile.k),
+            m: parseInt(profile.m),
+            bytes: parseInt(profile.bytes),
+            total_fragments: parseInt(profile.k) + parseInt(profile.m),
+            redundancy_ratio: parseInt(profile.m) / parseInt(profile.k),
+            description: profile.notes || `${profile.k}+${profile.m} Reed-Solomon encoding`
+        });
+    } catch (error) {
+        console.error('Error getting erasure profile:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// List all available erasure profiles
+app.get('/erasure-profiles', async (req, res) => {
+    try {
+        // Query database for all erasure profiles
+        const result = await query(
+            'SELECT erasure_id, k, m, bytes, notes FROM erasure_profile ORDER BY erasure_id'
+        );
+        
+        const profileList = result.rows.map(profile => {
+            const k = parseInt(profile.k);
+            const m = parseInt(profile.m);
+            const bytes = parseInt(profile.bytes);
+            
+            return {
+                profile_id: profile.erasure_id,
+                k: k,
+                m: m,
+                bytes: bytes,
+                description: profile.notes || `${k}+${m} Reed-Solomon encoding, can survive ${m} failures`,
+                total_fragments: k + m,
+                redundancy_ratio: m / k
+            };
+        });
+        
+        res.json({ success: true, profiles: profileList });
+    } catch (error) {
+        console.error('Error listing erasure profiles:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// Get files for an account
+app.get('/files/:accountId', async (req, res) => {
+    try {
+        const { accountId } = req.params;
+        const result = await query(`
+            SELECT 
+                fo.file_id,
+                fo.file_name,
+                fo.file_size,
+                fo.logical_path,
+                fo.uploaded_at,
+                fv.version_id,
+                fv.erasure_id,
+                fv.content_hash
+            FROM FILE_OBJECTS fo
+            JOIN FILE_VERSIONS fv ON fo.file_id = fv.file_id
+            WHERE fo.account_id = $1
+            ORDER BY fo.uploaded_at DESC
+        `, [accountId]);
+        
+        res.json({
+            success: true,
+            files: result.rows
+        });
+    } catch (error) {
+        console.error('Error retrieving files:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// Get file info by file ID
+app.get('/files/info/:fileId', async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        const result = await query(`
+            SELECT 
+                fo.file_id,
+                fo.account_id,
+                fo.file_name,
+                fo.file_size,
+                fo.logical_path,
+                fo.uploaded_at,
+                fv.version_id,
+                fv.erasure_id,
+                fv.content_hash
+            FROM FILE_OBJECTS fo
+            JOIN FILE_VERSIONS fv ON fo.file_id = fv.file_id
+            WHERE fo.file_id = $1
+        `, [fileId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        res.json({
+            success: true,
+            file: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error retrieving file info:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+});
+
+// Graceful shutdown with proper database cleanup
+process.on('SIGTERM', async () => {
+    console.log('Shutting down master node gracefully...');
+    try {
+        // Mark node as inactive
+        await query('UPDATE node SET is_active = false WHERE node_id = $1', [NODE_ID]);
+        console.log('Node marked as inactive in database');
+        
+        // Close all database connections
+        await pool.end();
+        console.log('Database connection pool closed');
+        
+    } catch (error) {
+        console.error('Error during shutdown:', error);
+    } finally {
+        process.exit(0);
+    }
+});
+
+process.on('SIGINT', async () => {
+    console.log('Received SIGINT, shutting down gracefully...');
+    process.emit('SIGTERM');
 });
 
 async function startServer() {
-    await initialiseDB();
-    setInterval(heartbeat, HEARTBEAT_INTERVAL);
-    setInterval(updateCapacity, HEARTBEAT_INTERVAL * 6);
-    
-    app.listen(NODE_PORT, '0.0.0.0', () => {
-        console.log(`Master Node server with PostgreSQL database running on port ${NODE_PORT}`);
-        console.log(`API available at: http://${NODE_HOSTNAME}:${NODE_PORT}`);
-        console.log(`Database: PostgreSQL`);
-    });
+    try {
+        // Initialize database connection first
+        await initializeDatabase();
+        
+        // Check database health before starting
+        const dbHealth = await checkDatabaseHealth();
+        if (!dbHealth.healthy) {
+            console.warn('Database health check failed:', dbHealth.reason);
+            console.warn('Continuing startup, but some features may not work properly');
+        } else {
+            console.log(`Database health check passed. Found ${dbHealth.tables} tables.`);
+        }
+        
+        // Initialize master node in database
+        await initialiseDB();
+        
+        // Start periodic tasks
+        setInterval(heartbeat, HEARTBEAT_INTERVAL);
+        setInterval(updateCapacity, HEARTBEAT_INTERVAL * 6);
+        
+        // Start the server
+        app.listen(NODE_PORT, '0.0.0.0', () => {
+            console.log('=================================');
+            console.log('🚀 Master Node Server Started');
+            console.log('=================================');
+            console.log(`Port: ${NODE_PORT}`);
+            console.log(`Hostname: ${NODE_HOSTNAME}`);
+            console.log(`API Endpoint: http://${NODE_HOSTNAME}:${NODE_PORT}`);
+            console.log(`Database: PostgreSQL`);
+            console.log(`Pool Size: ${pool.options.max} connections`);
+            console.log('Health Check: /health');
+            console.log('Query Endpoint: /query');
+            console.log('=================================');
+        });
+        
+    } catch (error) {
+        console.error('Failed to start master node server:', error);
+        process.exit(1);
+    }
 }
 
 startServer().catch((error) => {

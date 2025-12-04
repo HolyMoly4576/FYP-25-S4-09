@@ -11,13 +11,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
-COPY ./app/requirements.txt ./app/requirements.txt
+COPY app/requirements.txt ./app/requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r ./app/requirements.txt
 
 # Copy application code maintaining the app directory structure
-COPY ./app/ ./app/
+COPY app/ ./app/
 
 # Copy .env file from the project root
 COPY .env ./

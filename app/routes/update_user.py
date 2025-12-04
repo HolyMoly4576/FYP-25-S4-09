@@ -8,8 +8,7 @@ import logging
 from app.db.session import get_db
 from app.models import Account
 from app.core.security import verify_password, get_password_hash, decode_access_token
-from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
-from app.routes.login import oauth2_scheme  # using HTTPBearer now
+from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
 
@@ -42,153 +41,147 @@ class UpdateUserResponse(BaseModel):
 
 
 # -----------------------------
-# Helper - get current account
+# Helper - get current account from database
 # -----------------------------
-def get_current_account(
-    token=Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> Account:
-    """
-    Get the current authenticated account from the JWT token.
-    Handles HTTPBearer or string tokens safely.
-    """
+def get_current_account_from_db(token: str, db: Session):
+    """Get account info from database via SQLAlchemy."""
     try:
-        # ✅ Extract raw JWT string from HTTPBearer token
-        token_str = token.credentials if hasattr(token, "credentials") else token
-
-        payload = decode_access_token(token_str)
+        # Decode token to get account_id and username
+        payload = decode_access_token(token)
         if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-            )
-
-        account_id = payload.get("sub")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        
+        account_id = payload.get("sub")  # account_id is stored in sub
+        username = payload.get("username")  # username is in username field
+        
         if not account_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-            )
-
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        # Query database for account info using account_id
         account = db.query(Account).filter(Account.account_id == account_id).first()
+        
         if not account:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
-
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        
         return account
-
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_current_account: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
-        )
+        logger.error(f"Error getting account from database: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
+
+
+def get_current_account(token=Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Get the current authenticated account from database."""
+    token_str = token.credentials if hasattr(token, "credentials") else token
+    return get_current_account_from_db(token_str, db)
 
 
 # -----------------------------
 # Update Profile
 # -----------------------------
 @router.put("/profile", response_model=UpdateUserResponse)
-def update_profile(
-    profile_data: UpdateProfileRequest,
+async def update_profile(
+    update_data: UpdateProfileRequest,
     request: Request,
     current_account: Account = Depends(get_current_account),
     db: Session = Depends(get_db)
 ):
     """
-    Update user profile information (username and/or email).
-    Requires authentication.
+    Update user profile information.
+    Allows updating username and/or email.
     """
     try:
-        updated_fields = []
-
-        # Update username if provided
-        if profile_data.username is not None:
-            if profile_data.username.strip() == "":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Username cannot be empty",
-                )
-            if profile_data.username != current_account.username:
-                existing_username = db.query(Account).filter(
-                    Account.username == profile_data.username,
-                    Account.account_id != current_account.account_id
-                ).first()
-                if existing_username:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Username already taken",
-                    )
-                current_account.username = profile_data.username
-                updated_fields.append("username")
-
-        # Update email if provided
-        if profile_data.email is not None:
-            if profile_data.email != current_account.email:
-                existing_email = db.query(Account).filter(
-                    Account.email == profile_data.email,
-                    Account.account_id != current_account.account_id
-                ).first()
-                if existing_email:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Email already registered",
-                    )
-                current_account.email = profile_data.email.lower()
-                updated_fields.append("email")
-
-        if not updated_fields:
+        logger.info(f"Profile update request for account {current_account.account_id}")
+        
+        # Check if there's anything to update
+        if not update_data.username and not update_data.email:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No fields to update",
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="At least one field (username or email) must be provided"
             )
-
-        db.commit()
-        db.refresh(current_account)
-
-        # Log profile update activity
-        log_activity(
-            db=db,
-            account_id=current_account.account_id,
-            action_type="PROFILE_UPDATE",
-            resource_type="ACCOUNT",
-            resource_id=current_account.account_id,
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
-            details={"updated_fields": updated_fields}
-        )
-
+        
+        updates_made = []
+        
+        # Update username if provided
+        if update_data.username:
+            if update_data.username != current_account.username:
+                # Check if username is already taken
+                existing_account = db.query(Account).filter(
+                    Account.username == update_data.username,
+                    Account.account_id != current_account.account_id
+                ).first()
+                
+                if existing_account:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Username is already taken"
+                    )
+                
+                current_account.username = update_data.username
+                updates_made.append("username")
+                logger.info(f"Username updated for account {current_account.account_id}")
+        
+        # Update email if provided
+        if update_data.email:
+            if update_data.email != current_account.email:
+                # Check if email is already taken
+                existing_account = db.query(Account).filter(
+                    Account.email == update_data.email,
+                    Account.account_id != current_account.account_id
+                ).first()
+                
+                if existing_account:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Email is already registered"
+                    )
+                
+                current_account.email = update_data.email
+                updates_made.append("email")
+                logger.info(f"Email updated for account {current_account.account_id}")
+        
+        # Commit changes if any updates were made
+        if updates_made:
+            db.commit()
+            db.refresh(current_account)
+            
+            # Log the activity
+            client_ip = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "unknown")
+            
+            message = f"Profile updated successfully. Updated fields: {', '.join(updates_made)}"
+            logger.info(f"Profile update completed for account {current_account.account_id}")
+        else:
+            message = "No changes were made to the profile"
+        
         return UpdateUserResponse(
             account_id=str(current_account.account_id),
             username=current_account.username,
             email=current_account.email,
             account_type=current_account.account_type,
             created_at=current_account.created_at.isoformat(),
-            message=f"Profile updated successfully: {', '.join(updated_fields)}",
+            message=message
         )
-
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Profile update error: {str(e)}")
-        logger.error(traceback.format_exc())
         db.rollback()
+        logger.error(f"Error updating profile for account {current_account.account_id}: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
+            detail="Failed to update profile"
         )
 
 
 # -----------------------------
 # Update Password
 # -----------------------------
-@router.put("/password", response_model=UpdateUserResponse)
-def update_password(
+@router.put("/password")
+async def update_password(
     password_data: UpdatePasswordRequest,
     request: Request,
     current_account: Account = Depends(get_current_account),
@@ -196,63 +189,55 @@ def update_password(
 ):
     """
     Update user password.
-    Requires authentication and verification of old password.
+    Requires current password verification.
     """
     try:
-        # Verify old password
+        logger.info(f"Password update request for account {current_account.account_id}")
+        
+        # Verify current password
         if not verify_password(password_data.old_password, current_account.password_hash):
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect old password",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Incorrect current password"
             )
-
-        # Check if new password is different from old password
-        if verify_password(password_data.new_password, current_account.password_hash):
+        
+        # Validate new password
+        if len(password_data.new_password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="New password must be different from old password",
+                detail="New password must be at least 8 characters long"
             )
-
-        # Validate new password length (minimum 6 characters)
-        if len(password_data.new_password) < 6:
+        
+        if password_data.new_password == password_data.old_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="New password must be at least 6 characters long",
+                detail="New password must be different from current password"
             )
-
+        
+        # Update password
         current_account.password_hash = get_password_hash(password_data.new_password)
         db.commit()
         db.refresh(current_account)
-
-        # Log password change activity
-        log_activity(
-            db=db,
-            account_id=current_account.account_id,
-            action_type="PASSWORD_CHANGE",
-            resource_type="ACCOUNT",
-            resource_id=current_account.account_id,
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
-            details={}
-        )
-
-        return UpdateUserResponse(
-            account_id=str(current_account.account_id),
-            username=current_account.username,
-            email=current_account.email,
-            account_type=current_account.account_type,
-            created_at=current_account.created_at.isoformat(),
-            message="Password updated successfully",
-        )
-
+        
+        # Log the activity
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        
+        logger.info(f"Password updated successfully for account {current_account.account_id}")
+        
+        return {
+            "message": "Password updated successfully",
+            "account_id": str(current_account.account_id)
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Password update error: {str(e)}")
-        logger.error(traceback.format_exc())
         db.rollback()
+        logger.error(f"Error updating password for account {current_account.account_id}: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
+            detail="Failed to update password"
         )
 

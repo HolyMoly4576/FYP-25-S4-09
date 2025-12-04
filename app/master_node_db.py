@@ -21,6 +21,11 @@ class MasterNodeDB:
             }
             
             response = requests.post(self.query_endpoint, json=payload, timeout=10)
+            
+            # Log the response for debugging
+            if response.status_code != 200:
+                print(f"Master node error: Status {response.status_code}, Body: {response.text}")
+            
             response.raise_for_status()
             
             return response.json()
@@ -29,13 +34,19 @@ class MasterNodeDB:
             raise Exception(f"Failed to connect to master node at {self.master_node_url}. Is the master node running? Error: {str(e)}")
         except requests.exceptions.Timeout as e:
             raise Exception(f"Timeout connecting to master node at {self.master_node_url}. Error: {str(e)}")
-        except requests.RequestException as e:
+        except requests.exceptions.RequestException as e:
             error_detail = str(e)
             if hasattr(e, 'response') and e.response is not None:
                 try:
-                    error_detail = e.response.json().get('error', error_detail)
+                    # Try to get JSON error details
+                    error_json = e.response.json()
+                    error_detail = error_json.get('error', error_json.get('detail', error_detail))
+                    print(f"Master node JSON error: {error_json}")
                 except:
+                    # Fall back to text response
                     error_detail = e.response.text or error_detail
+                    print(f"Master node text error: {error_detail}")
+            print(f"Request exception details: {error_detail}")
             raise Exception(f"Failed to execute query on master node: {error_detail}")
     
     def select(self, sql: str, params: List[Any] = None) -> List[Dict[str, Any]]:
@@ -94,5 +105,10 @@ class MasterNodeDB:
 master_db = MasterNodeDB()
 
 def get_master_db() -> MasterNodeDB:
-    """Get master node database instance"""
+    """Get master node database instance for FastAPI dependency injection"""
+    return master_db
+
+# Legacy alias for backward compatibility
+def get_master_node_db() -> MasterNodeDB:
+    """Get master node database instance (deprecated, use get_master_db)"""
     return master_db

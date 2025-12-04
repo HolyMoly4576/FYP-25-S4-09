@@ -142,6 +142,44 @@ app.post('/fragments', async (req, res) => {
     }
 });
 
+// List all fragments stored on this node
+app.get('/fragments', async (req, res) => {
+    try {
+        const files = await fs.readdir(STORAGE_PATH);
+        const fragments = [];
+        
+        for (const file of files) {
+            if (file.endsWith('.bin')) {
+                const fragmentId = file.replace('.bin', '');
+                const fragmentPath = path.join(STORAGE_PATH, file);
+                
+                try {
+                    const stats = await fs.stat(fragmentPath);
+                    fragments.push({
+                        fragmentId: fragmentId,
+                        bytes: stats.size,
+                        storedAt: stats.mtime.toISOString(),
+                        path: fragmentPath
+                    });
+                } catch (error) {
+                    console.error(`Error getting stats for fragment ${fragmentId}:`, error.message);
+                    // Continue with other fragments
+                }
+            }
+        }
+        
+        res.json({
+            success: true,
+            nodeId: NODE_ID,
+            fragmentCount: fragments.length,
+            fragments: fragments
+        });
+    } catch (error) {
+        console.error('Error listing fragments:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 app.get('/fragments/:fragmentId', async (req, res) => {
     try {
         const { fragmentId } = req.params;

@@ -1,5 +1,58 @@
+version: '3.8'
+
+# YAML anchors for common configurations
+x-common-environment: &common-environment
+  MASTER_NODE_HOST: master_node
+  MASTER_NODE_PORT: 3000
+  NODE_ROLE: STORAGE
+  HEARTBEAT_INTERVAL: 30000
+
+x-storage-node: &storage-node-template
+  build:
+    context: ./storage-node
+    dockerfile: Dockerfile
+  networks:
+    - storage_internal
+  depends_on:
+    master_node:
+      condition: service_healthy
+
 services:
-  # Master node with PostgreSQL database
+  # Core Infrastructure
+  postgres_db:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: database
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_MAX_CONNECTIONS: 100
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./Database/Database.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - public_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d database"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres 
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+
   master_node:
     build:
       context: ./master-node
@@ -11,19 +64,21 @@ services:
       NODE_PORT: 3000
       HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/master_node
-      # PostgreSQL connection
       POSTGRES_HOST: postgres_db
       POSTGRES_PORT: 5432
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: database
       DATABASE_URL: postgresql://user:password@postgres_db:5432/database
+      POSTGRES_MAX_CONNECTIONS: 25
+      POSTGRES_MIN_CONNECTIONS: 5
     ports:
-      - "8000:3000"  # Master node API
+      - "8001:3000"
     volumes:
       - master_node_data:/data
     networks:
-      - storage_network
+      - public_network
+      - storage_internal
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -32,96 +87,178 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
-  # Storage nodes connect to master node
-  storage_node_1:
+  # FastAPI Application
+  fastapi:
     build:
-      context: ./storage-node
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./app/Dockerfile
+    container_name: app
+    environment:
+      DATABASE_URL: postgresql://user:password@postgres_db:5432/database
+      MASTER_NODE_URL: http://master_node:3000
+      SECRET_KEY: your-secret-key-here
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+    ports:
+      - "8004:8000"
+    volumes:
+      - ./app:/workspace/app
+      - ./.env:/workspace/.env
+    networks:
+      - public_network
+      - storage_internal
+    depends_on:
+      master_node:
+        condition: service_healthy
+
+  # Storage Nodes (1-12: Distributed storage infrastructure)
+  storage_node_1:
+    <<: *storage-node-template
     container_name: storage_node_1
     environment:
-      MASTER_NODE_HOST: master_node
-      MASTER_NODE_PORT: 3000
-      NODE_ROLE: STORAGE
+      <<: *common-environment
       NODE_HOSTNAME: storage_node_1
-      HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/storage_node_1
     ports:
-      - "8001:3000"
+      - "8100:3000"
     volumes:
       - storage_node_1_data:/data
-    networks:
-      - storage_network
-    depends_on:
-      master_node:
-        condition: service_healthy
 
   storage_node_2:
-    build:
-      context: ./storage-node
-      dockerfile: Dockerfile
+    <<: *storage-node-template
     container_name: storage_node_2
     environment:
-      MASTER_NODE_HOST: master_node
-      MASTER_NODE_PORT: 3000
-      NODE_ROLE: STORAGE
+      <<: *common-environment
       NODE_HOSTNAME: storage_node_2
-      HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/storage_node_2
     ports:
-      - "8002:3000"
+      - "8101:3000"
     volumes:
       - storage_node_2_data:/data
-    networks:
-      - storage_network
-    depends_on:
-      master_node:
-        condition: service_healthy
-  
+
   storage_node_3:
-    build:
-      context: ./storage-node
-      dockerfile: Dockerfile
+    <<: *storage-node-template
     container_name: storage_node_3
     environment:
-      MASTER_NODE_HOST: master_node
-      MASTER_NODE_PORT: 3000
-      NODE_ROLE: STORAGE
+      <<: *common-environment
       NODE_HOSTNAME: storage_node_3
-      HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/storage_node_3
     ports:
-      - "8003:3000"
+      - "8102:3000"
     volumes:
       - storage_node_3_data:/data
-    networks:
-      - storage_network
-    depends_on:
-      master_node:
-        condition: service_healthy
 
-  # Production/Development database
-  postgres_db:
-    image: postgres:15
-    container_name: postgres_db
+  storage_node_4:
+    <<: *storage-node-template
+    container_name: storage_node_4
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: database
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_4
+      STORAGE_PATH: /data/storage_node_4
     ports:
-      - "5433:5432"
+      - "8103:3000"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./Database/Database.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - storage_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d database"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - storage_node_4_data:/data
 
-  # Keep test database for backend testing
+  storage_node_5:
+    <<: *storage-node-template
+    container_name: storage_node_5
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_5
+      STORAGE_PATH: /data/storage_node_5
+    ports:
+      - "8104:3000"
+    volumes:
+      - storage_node_5_data:/data
+
+  storage_node_6:
+    <<: *storage-node-template
+    container_name: storage_node_6
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_6
+      STORAGE_PATH: /data/storage_node_6
+    ports:
+      - "8105:3000"
+    volumes:
+      - storage_node_6_data:/data
+
+  storage_node_7:
+    <<: *storage-node-template
+    container_name: storage_node_7
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_7
+      STORAGE_PATH: /data/storage_node_7
+    ports:
+      - "8106:3000"
+    volumes:
+      - storage_node_7_data:/data
+
+  storage_node_8:
+    <<: *storage-node-template
+    container_name: storage_node_8
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_8
+      STORAGE_PATH: /data/storage_node_8
+    ports:
+      - "8107:3000"
+    volumes:
+      - storage_node_8_data:/data
+
+  storage_node_9:
+    <<: *storage-node-template
+    container_name: storage_node_9
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_9
+      STORAGE_PATH: /data/storage_node_9
+    ports:
+      - "8108:3000"
+    volumes:
+      - storage_node_9_data:/data
+
+  storage_node_10:
+    <<: *storage-node-template
+    container_name: storage_node_10
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_10
+      STORAGE_PATH: /data/storage_node_10
+    ports:
+      - "8109:3000"
+    volumes:
+      - storage_node_10_data:/data
+
+  storage_node_11:
+    <<: *storage-node-template
+    container_name: storage_node_11
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_11
+      STORAGE_PATH: /data/storage_node_11
+    ports:
+      - "8110:3000"
+    volumes:
+      - storage_node_11_data:/data
+
+  storage_node_12:
+    <<: *storage-node-template
+    container_name: storage_node_12
+    environment:
+      <<: *common-environment
+      NODE_HOSTNAME: storage_node_12
+      STORAGE_PATH: /data/storage_node_12
+    ports:
+      - "8111:3000"
+    volumes:
+      - storage_node_12_data:/data
+
+  # Test Infrastructure
   test_postgres_db:
     image: postgres:15
     container_name: test_postgres_db
@@ -133,37 +270,34 @@ services:
       - "5432:5432"
     volumes:
       - test_postgres_data:/var/lib/postgresql/data
-      - ./Database/Database.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - storage_network
+      - public_network
+    profiles:
+      - test
 
-  # Backend now connects to master node instead of postgres
-  fastapi:
-    build:
-      context: .
-      dockerfile: ./app/Dockerfile
-    container_name: app
-    ports:
-      - "8004:8000"   
-    environment:
-      # Master node connection for database queries
-      MASTER_NODE_URL: http://master_node:3000
-      # Keep test database for testing
-      TEST_DATABASE_URL: postgresql://test_user:test_password@test_postgres_db:5432/test_fyp
-    networks:
-      - storage_network
-    depends_on:
-      master_node:
-        condition: service_healthy
-  
 networks:
-  storage_network:
+  # Public network - accessible from outside
+  public_network:
+    driver: bridge
+  storage_internal:
     driver: bridge
 
 volumes:
+  # Core Infrastructure
   master_node_data:
+  postgres_data:
+  test_postgres_data:
+  
+  # Storage Node Volumes
   storage_node_1_data:
   storage_node_2_data:
   storage_node_3_data:
-  postgres_data:
-  test_postgres_data:
+  storage_node_4_data:
+  storage_node_5_data:
+  storage_node_6_data:
+  storage_node_7_data:
+  storage_node_8_data:
+  storage_node_9_data:
+  storage_node_10_data:
+  storage_node_11_data:
+  storage_node_12_data:

@@ -1,4 +1,0 @@
-Hello World! This is a test file for the distributed storage system.
-This file will be uploaded to storage node 1.
-Created on: November 21, 2025
-Testing file upload functionality...

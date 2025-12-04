@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed File Storage - Simple Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        /* Login Section */
+        .login-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .login-form {
+            display: inline-flex;
+            gap: 10px;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .login-form input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .btn {
+            background: #4facfe;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            background: #3d8bfe;
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Upload Section */
+        .upload-section {
+            margin-bottom: 40px;
+        }
+
+        .erasure-selector {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .erasure-options {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .erasure-option {
+            padding: 10px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .erasure-option:hover {
+            border-color: #4facfe;
+        }
+
+        .erasure-option.selected {
+            border-color: #4facfe;
+            background: #f0f8ff;
+        }
+
+        .drop-zone {
+            border: 3px dashed #ccc;
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #fafafa;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: #4facfe;
+            background: #f0f8ff;
+        }
+
+        .drop-zone.uploading {
+            border-color: #28a745;
+            background: #f0fff0;
+        }
+
+        .drop-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: #4facfe;
+        }
+
+        /* File List Section */
+        .file-list {
+            margin-top: 30px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            padding: 15px;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            background: #f8f9fa;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .file-meta {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.warning { background: #fff3cd; color: #856404; }
+
+        .hidden { display: none; }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #e9ecef;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            transition: width 0.3s;
+        }
+
+        .user-info {
+            background: #e8f5e8;
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 Distributed File Storage</h1>
+            <p>Reed-Solomon Erasure Coding with Fault Tolerance</p>
+        </div>
+
+        <div class="content">
+            <!-- Login Section -->
+            <div id="loginSection" class="login-section">
+                <h2>Login to Access Your Files</h2>
+                <div class="login-form">
+                    <input type="text" id="username" placeholder="Username" value="alice">
+                    <input type="password" id="password" placeholder="Password" value="password123">
+                    <button class="btn" onclick="login()">Login</button>
+                </div>
+                <div id="loginStatus"></div>
+            </div>
+
+            <!-- Main Interface (Hidden until logged in) -->
+            <div id="mainInterface" class="hidden">
+                <!-- User Info -->
+                <div id="userInfo" class="user-info"></div>
+
+                <!-- Upload Section -->
+                <div class="upload-section">
+                    <h2>📤 Upload Files</h2>
+                    
+                    <div class="erasure-selector">
+                        <label>Select Redundancy Level:</label>
+                        <div class="erasure-options">
+                            <div class="erasure-option" data-profile="LOW">
+                                <strong>LOW</strong><br>
+                                4+2=6 fragments
+                            </div>
+                            <div class="erasure-option selected" data-profile="MEDIUM">
+                                <strong>MEDIUM</strong><br>
+                                6+3=9 fragments
+                            </div>
+                            <div class="erasure-option" data-profile="HIGH">
+                                <strong>HIGH</strong><br>
+                                8+4=12 fragments
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="drop-zone" id="dropZone">
+                        <div class="drop-icon">📁</div>
+                        <h3>Drag & Drop Files Here</h3>
+                        <p>or <strong>click</strong> to select files</p>
+                        <input type="file" id="fileInput" multiple style="display: none;">
+                    </div>
+                    
+                    <div id="uploadProgress" class="hidden">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div id="progressText">Uploading...</div>
+                    </div>
+                </div>
+
+                <!-- File List Section -->
+                <div class="file-list">
+                    <h2>📁 Your Files</h2>
+                    <button class="btn" onclick="loadFiles()" style="margin-bottom: 15px;">🔄 Refresh Files</button>
+                    <div id="fileList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let accessToken = null;
+        let currentUser = null;
+        let selectedProfile = 'MEDIUM';
+        const API_BASE = 'http://localhost:8004';
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Erasure profile selection
+            document.querySelectorAll('.erasure-option').forEach(option => {
+                option.addEventListener('click', function() {
+                    document.querySelectorAll('.erasure-option').forEach(o => o.classList.remove('selected'));
+                    this.classList.add('selected');
+                    selectedProfile = this.dataset.profile;
+                });
+            });
+
+            // Drop zone events
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+
+            dropZone.addEventListener('click', () => fileInput.click());
+            
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                handleFiles(e.dataTransfer.files);
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+
+            // Enter key for login
+            document.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !document.getElementById('loginSection').classList.contains('hidden')) {
+                    login();
+                }
+            });
+        }
+
+        // Authentication functions
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const statusDiv = document.getElementById('loginStatus');
+
+            if (!username || !password) {
+                statusDiv.innerHTML = '<div class="status error">Please enter username and password</div>';
+                return;
+            }
+
+            try {
+                statusDiv.innerHTML = '<div class="status">Logging in...</div>';
+
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username_or_email: username,
+                        password: password
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    accessToken = data.access_token;
+                    currentUser = data.user;
+                    
+                    document.getElementById('loginSection').classList.add('hidden');
+                    document.getElementById('mainInterface').classList.remove('hidden');
+                    
+                    document.getElementById('userInfo').innerHTML = 
+                        `Logged in as: <strong>${currentUser.username}</strong> (${currentUser.account_type})`;
+                    
+                    // Load user's files
+                    loadFiles();
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">Login failed: ${data.detail}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">Network error: ${error.message}</div>`;
+            }
+        }
+
+        // File handling functions
+        async function handleFiles(files) {
+            for (let file of files) {
+                await uploadFile(file);
+            }
+        }
+
+        async function uploadFile(file) {
+            const dropZone = document.getElementById('dropZone');
+            const progressDiv = document.getElementById('uploadProgress');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+
+            try {
+                dropZone.classList.add('uploading');
+                progressDiv.classList.remove('hidden');
+                progressText.innerHTML = `Uploading: ${file.name}`;
+                progressFill.style.width = '10%';
+
+                // Convert file to base64
+                const base64Data = await fileToBase64(file);
+                progressFill.style.width = '30%';
+
+                const uploadData = {
+                    filename: file.name,
+                    data: base64Data.split(',')[1], // Remove data URL prefix
+                    content_type: file.type || 'application/octet-stream',
+                    erasure_id: selectedProfile
+                };
+
+                progressFill.style.width = '50%';
+
+                const response = await fetch(`${API_BASE}/files/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify(uploadData)
+                });
+
+                progressFill.style.width = '80%';
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    progressFill.style.width = '100%';
+                    progressText.innerHTML = `✅ Upload successful: ${file.name}`;
+                    
+                    setTimeout(() => {
+                        progressDiv.classList.add('hidden');
+                        dropZone.classList.remove('uploading');
+                        loadFiles(); // Refresh file list
+                    }, 1500);
+                } else {
+                    throw new Error(result.detail || 'Upload failed');
+                }
+
+            } catch (error) {
+                progressText.innerHTML = `❌ Upload failed: ${error.message}`;
+                dropZone.classList.remove('uploading');
+                
+                setTimeout(() => {
+                    progressDiv.classList.add('hidden');
+                }, 3000);
+            }
+        }
+
+        async function loadFiles() {
+            const fileListDiv = document.getElementById('fileList');
+            
+            try {
+                fileListDiv.innerHTML = '<div class="status">Loading files...</div>';
+
+                const response = await fetch(`${API_BASE}/files/list`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.files && data.files.length > 0) {
+                        fileListDiv.innerHTML = data.files.map(file => createFileItem(file)).join('');
+                    } else {
+                        fileListDiv.innerHTML = '<div class="status">No files uploaded yet. Upload your first file above!</div>';
+                    }
+                } else {
+                    fileListDiv.innerHTML = `<div class="status error">Failed to load files: ${data.detail}</div>`;
+                }
+            } catch (error) {
+                fileListDiv.innerHTML = `<div class="status error">Network error: ${error.message}</div>`;
+            }
+        }
+
+        function createFileItem(file) {
+            const uploadDate = new Date(file.uploaded_at).toLocaleString();
+            const fileSize = formatFileSize(file.file_size);
+            
+            return `
+                <div class="file-item">
+                    <div class="file-info">
+                        <div class="file-name">📄 ${file.file_name}</div>
+                        <div class="file-meta">
+                            Size: ${fileSize} | 
+                            Uploaded: ${uploadDate} | 
+                            Profile: ${file.erasure_id}
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <button class="btn" onclick="downloadFile('${file.file_id}', '${file.file_name}')">
+                            📥 Download
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function downloadFile(fileId, fileName) {
+            try {
+                const response = await fetch(`${API_BASE}/files/download/${fileId}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    const error = await response.json();
+                    alert(`Download failed: ${error.detail}`);
+                }
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        }
+
+        // Utility functions
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>

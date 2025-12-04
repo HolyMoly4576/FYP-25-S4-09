@@ -1,16 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer
-from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import traceback
 import logging
 
-from app.db.session import get_db, get_master_node_db
-from app.models import Account
+from app.master_node_db import MasterNodeDB, get_master_db
 from app.core.security import verify_password, get_password_hash, create_access_token
-from app.master_node_db import MasterNodeDB
-from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -50,17 +46,20 @@ class UserResponse(BaseModel):
 
 def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, username_or_email: str) -> Optional[dict]:
 	"""Get account by username or email from master node database (PostgreSQL)."""
-	# Query account table in master node database (PostgreSQL)
-	query = """
-	SELECT account_id, username, email, password_hash, account_type, created_at
-	FROM account 
-	WHERE username = $1 OR email = $2
-	"""
-	
-	result = master_db.select(query, [username_or_email, username_or_email])
+	# Try username first
+	query_username = "SELECT account_id, username, email, password_hash, account_type, created_at FROM account WHERE username = $1"
+	result = master_db.select(query_username, [username_or_email])
 	
 	if result:
-		return result[0]  # Return first matching user
+		return result[0]
+	
+	# If no result by username, try email
+	query_email = "SELECT account_id, username, email, password_hash, account_type, created_at FROM account WHERE email = $1"
+	result = master_db.select(query_email, [username_or_email])
+	
+	if result:
+		return result[0]
+		
 	return None
 
 
@@ -68,8 +67,7 @@ def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, userna
 def login(
 	login_data: LoginRequest, 
 	request: Request,
-	master_db: MasterNodeDB = Depends(get_master_node_db),
-	db: Session = Depends(get_db)
+	master_db: MasterNodeDB = Depends(get_master_db)
 ):
 	"""
 	Login endpoint using master node database (PostgreSQL). Accepts username/email and password.
@@ -131,18 +129,23 @@ def login(
 			data={"sub": str(account_id_uuid), "username": account["username"]}
 		)
 		
-		# Log login activity
+		# Log login activity via Master Node
 		try:
-			log_activity(
-				db=db,
-				account_id=account_id_uuid,
-				action_type="LOGIN",
-				resource_type="ACCOUNT",
-				resource_id=account_id_uuid,
-				ip_address=get_client_ip(request),
-				user_agent=get_user_agent(request),
-				details={"username": account["username"], "account_type": account_type}
-			)
+			login_log_sql = """
+				INSERT INTO ACTIVITY_LOG (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			"""
+			log_details = f'{{"username": "{account["username"]}", "account_type": "{account_type}"}}'
+			master_db.execute(login_log_sql, [
+				str(uuid.uuid4()), 
+				str(account_id_uuid), 
+				"LOGIN", 
+				"ACCOUNT", 
+				str(account_id_uuid),
+				request.client.host if request.client else "unknown",
+				request.headers.get("user-agent", "unknown"),
+				log_details
+			])
 		except Exception as e:
 			# Log activity logging errors but don't fail the login
 			logger.warning(f"Failed to log login activity: {str(e)}")
@@ -233,7 +236,7 @@ def login(
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(register_data: RegisterRequest, master_db: MasterNodeDB = Depends(get_master_node_db)):
+def register(register_data: RegisterRequest, master_db: MasterNodeDB = Depends(get_master_db)):
     """
     Registration endpoint. Creates a new account through master node (PostgreSQL).
     """
@@ -326,7 +329,7 @@ def register(register_data: RegisterRequest, master_db: MasterNodeDB = Depends(g
 @router.get("/me", response_model=UserResponse)
 def get_current_user(
     token = Depends(oauth2_scheme),
-    master_db: MasterNodeDB = Depends(get_master_node_db)
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
     """
     Get current authenticated user information from master node (PostgreSQL).

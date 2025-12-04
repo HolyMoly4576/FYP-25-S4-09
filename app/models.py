@@ -96,3 +96,26 @@ class ActivityLog(Base):
     user_agent = Column(Text, nullable=True)
     details = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# Erasure Profile model
+class ErasureProfile(Base):
+    __tablename__ = "erasure_profile"
+
+    erasure_id = Column(String(50), primary_key=True)
+    k = Column(Integer, nullable=False)
+    m = Column(Integer, nullable=False)
+    bytes = Column(Integer, nullable=False)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("erasure_id IN ('LOW', 'MEDIUM', 'HIGH')", name="check_erasure_id"),
+    )
+
+
+# Account Erasure preference model
+class AccountErasure(Base):
+    __tablename__ = "account_erasure"
+
+    account_id = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), primary_key=True)
+    erasure_id = Column(String(50), ForeignKey("erasure_profile.erasure_id"), nullable=False)
