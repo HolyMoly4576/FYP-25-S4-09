@@ -30,5 +30,5 @@ ENV ENVIRONMENT=docker
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Command to run the application with increased limits
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "600", "--limit-max-requests", "1000", "--h11-max-incomplete-event-size", "134217728", "--timeout-graceful-shutdown", "60", "--backlog", "2048"]

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 from app.routes.login import router as auth_router
 from app.routes.userprofiles import router as userprofiles_router
@@ -15,13 +16,21 @@ from app.routes.userprofiles import router as userprofiles_router
 from app.routes.upload_files import router as upload_files_router
 from app.routes.download_files import router as download_files_router
 
-app = FastAPI(title="FYP Secure File Sharing API", version="0.1.0")
+# Get maximum request size from environment variable (default 200MB)
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", "209715200"))  # 200MB in bytes
+
+app = FastAPI(
+    title="FYP Secure File Sharing API", 
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8081",
-    "http://127.0.0.1:8081,
+    "http://127.0.0.1:8081",
     "*"  # Allow all origins for development
 ]
 

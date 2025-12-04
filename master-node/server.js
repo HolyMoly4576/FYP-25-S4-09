@@ -5,7 +5,16 @@ const fs = require('fs').promises;
 const path = require('path');
 const app = express();
 
-app.use(express.json());
+// Configure Express to handle large payloads (up to 200MB)
+app.use(express.json({ limit: '200mb', parameterLimit: 1000000 }));
+app.use(express.urlencoded({ limit: '200mb', extended: true, parameterLimit: 1000000 }));
+
+// Increase timeout for large uploads
+app.use((req, res, next) => {
+    req.setTimeout(600000); // 10 minutes
+    res.setTimeout(600000); // 10 minutes
+    next();
+});
 
 // PostgreSQL connection pool
 let pool;

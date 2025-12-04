@@ -5,9 +5,16 @@ const fs = require('fs').promises;
 const path = require('path');
 const app = express();
 
-app.use(express.json());
+// Configure Express to handle large payloads (up to 200MB)
+app.use(express.json({ limit: '200mb', parameterLimit: 1000000 }));
+app.use(express.urlencoded({ limit: '200mb', extended: true, parameterLimit: 1000000 }));
 
-// Master node connection instead of direct database
+// Increase timeout for large uploads
+app.use((req, res, next) => {
+    req.setTimeout(600000); // 10 minutes
+    res.setTimeout(600000); // 10 minutes
+    next();
+});// Master node connection instead of direct database
 const MASTER_NODE_HOST = process.env.MASTER_NODE_HOST || 'master_node';
 const MASTER_NODE_PORT = process.env.MASTER_NODE_PORT || 3000;
 const MASTER_NODE_URL = `http://${MASTER_NODE_HOST}:${MASTER_NODE_PORT}`;
