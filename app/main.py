@@ -4,7 +4,7 @@ import os
 
 from app.routes.login import router as auth_router
 from app.routes.userprofiles import router as userprofiles_router
-# from app.routes.update_user import router as update_user_router
+from app.routes.update_user import router as update_user_router
 # Keep disabled - need master node migration:
 # from app.routes.create_folders import router as folders_router
 # from app.routes.storage_limits import router as storage_router
@@ -45,7 +45,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 app.include_router(userprofiles_router)
-# app.include_router(update_user_router)
+app.include_router(update_user_router)
 # Keep disabled - need master node migration:
 # app.include_router(folders_router)
 # app.include_router(storage_router)

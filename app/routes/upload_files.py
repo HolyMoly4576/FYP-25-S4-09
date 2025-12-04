@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import logging
 import uuid
 import base64
@@ -24,12 +24,14 @@ router = APIRouter(prefix="/files", tags=["files"])
 # Master node configuration
 MASTER_NODE_URL = os.getenv("MASTER_NODE_URL", "http://master-node:3000")
 
+
 class FileUploadRequest(BaseModel):
     filename: str
     data: str  # base64 encoded file data
     content_type: Optional[str] = "application/octet-stream"
     folder_id: Optional[str] = None
     erasure_id: Optional[str] = "MEDIUM"
+
 
 class FileUploadResponse(BaseModel):
     file_id: str
@@ -40,6 +42,22 @@ class FileUploadResponse(BaseModel):
     upload_status: str
     fragments_stored: int
     erasure_profile: str
+
+
+class FileInfo(BaseModel):
+    file_id: str
+    file_name: str
+    file_size: int
+    logical_path: str
+    uploaded_at: str
+    version_id: Optional[str] = None
+    erasure_id: Optional[str] = None
+
+
+class FilesListResponse(BaseModel):
+    files: List[FileInfo]
+    total: int
+
 
 def get_current_account_from_master(token: str):
     """Get account info from master node API."""
@@ -236,9 +254,9 @@ def upload_file(
             content_type=upload_data.content_type,
             upload_status=upload_status,
             fragments_stored=fragments_stored,
-            erasure_profile=upload_data.erasure_id
+            erasure_profile=upload_data.erasure_id,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -246,5 +264,98 @@ def upload_file(
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading file: {str(e)}"
+            detail=f"Error uploading file: {str(e)}",
+        )
+
+
+@router.get("/search", response_model=FilesListResponse)
+def search_files(
+    q: str = Query(..., description="Search keyword for file name (partial, case-insensitive match)"),
+    current_account=Depends(get_current_account),
+):
+    """
+    Search files for the current authenticated user by partial name match.
+    """
+    try:
+        account_id = current_account["account_id"]
+
+        sql = """
+            SELECT 
+                fo.file_id, 
+                fo.file_name, 
+                fo.file_size, 
+                fo.logical_path, 
+                fo.uploaded_at,
+                fv.version_id,
+                fv.erasure_id
+            FROM file_objects fo
+            LEFT JOIN file_versions fv ON fo.file_id = fv.file_id
+            WHERE fo.account_id = $1 
+                AND fo.file_name ILIKE $2
+            ORDER BY fo.uploaded_at DESC
+        """
+        params = [str(account_id), f"%{q}%"]
+
+        response = requests.post(
+            f"{MASTER_NODE_URL}/query",
+            json={"sql": sql, "params": params},
+            timeout=30,
+        )
+
+        if response.status_code != 200:
+            logger.error(f"Failed to query files from master node: {response.text}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to search files",
+            )
+
+        result = response.json()
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to search files"),
+            )
+
+        files_data = result.get("data", [])
+
+        file_list: List[FileInfo] = []
+        for f in files_data:
+            uploaded_at = f.get("uploaded_at")
+            if isinstance(uploaded_at, str):
+                uploaded_at_str = uploaded_at
+            else:
+                uploaded_at_str = (
+                    uploaded_at.isoformat()
+                    if hasattr(uploaded_at, "isoformat")
+                    else str(uploaded_at)
+                )
+
+            file_list.append(
+                FileInfo(
+                    file_id=str(f["file_id"]),
+                    file_name=f["file_name"],
+                    file_size=int(f["file_size"]),
+                    logical_path=f["logical_path"],
+                    uploaded_at=uploaded_at_str,
+                    version_id=str(f["version_id"]) if f.get("version_id") else None,
+                    erasure_id=f.get("erasure_id"),
+                )
+            )
+
+        return FilesListResponse(files=file_list, total=len(file_list))
+
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error connecting to master node: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Master node unavailable",
+        )
+    except Exception as e:
+        logger.error(f"Error searching files: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to search files",
         )

@@ -179,61 +179,6 @@ def login(
 			detail=detail
 		)
 
-# Keep the old login route as backup (commented out)
-# @router.post("/login-old", response_model=TokenResponse)
-# def login_old(login_data: LoginRequest, db: Session = Depends(get_db)):
-#	"""
-#	Login endpoint. Accepts username/email and password.
-#	Returns JWT access token on successful authentication.
-#	"""
-#	try:
-#		# Find account by username or email
-#		account = get_account_by_username_or_email(db, login_data.username_or_email)
-#		
-#		if not account:
-#			raise HTTPException(
-#				status_code=status.HTTP_401_UNAUTHORIZED,
-#				detail="Incorrect username/email or password",
-#			)
-#		
-#		# Verify password
-#		if not verify_password(login_data.password, account.password_hash):
-#			raise HTTPException(
-#				status_code=status.HTTP_401_UNAUTHORIZED,
-#				detail="Incorrect username/email or password",
-#			)
-#		
-#		# Ensure account_type has a value (default to 'FREE' if None)
-#		account_type = account.account_type if account.account_type else "FREE"
-#		
-#		# Create access token
-#		access_token = create_access_token(
-#			data={"sub": str(account.account_id), "username": account.username}
-#		)
-#		
-#		return TokenResponse(
-#			access_token=access_token,
-#			token_type="bearer",
-#			account_id=str(account.account_id),
-#			username=account.username,
-#			account_type=account_type,
-#		)
-#	except HTTPException:
-#		# Re-raise HTTP exceptions as-is
-#		raise
-#	except Exception as e:
-#		# Log the full error for debugging
-#		logger.error(f"Login error: {str(e)}")
-#		logger.error(traceback.format_exc())
-#		# Return more detailed error in development
-#		error_detail = str(e)
-#		if hasattr(e, '__traceback__'):
-#			error_detail += f"\n{traceback.format_exc()}"
-#		raise HTTPException(
-#			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#			detail=f"Internal server error: {error_detail}",
-#		)
-
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(register_data: RegisterRequest, master_db: MasterNodeDB = Depends(get_master_db)):

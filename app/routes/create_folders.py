@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import logging
 import uuid
 
@@ -27,6 +27,11 @@ class FolderResponse(BaseModel):
     account_id: uuid.UUID
     parent_folder_id: Optional[uuid.UUID] = None
     created_at: str
+
+
+class FoldersListResponse(BaseModel):
+    folders: List[FolderResponse]
+    total: int
 
 
 def get_current_account(
@@ -104,4 +109,44 @@ def create_folder(
         created_at=folder.created_at.isoformat(),
     )
 
+
+@router.get("/search", response_model=FoldersListResponse)
+def search_folders(
+    q: str,
+    current_account: Account = Depends(get_current_account),
+    db: Session = Depends(get_db),
+):
+    """
+    Search folders for the current authenticated user by partial name match.
+    """
+    try:
+        # Use ILIKE for case-insensitive partial match (PostgreSQL)
+        query = db.query(Folder).filter(
+            Folder.account_id == current_account.account_id,
+            Folder.name.ilike(f"%{q}%"),
+        ).order_by(Folder.name)
+
+        folders = query.all()
+
+        folder_responses = [
+            FolderResponse(
+                folder_id=folder.folder_id,
+                name=folder.name,
+                account_id=folder.account_id,
+                parent_folder_id=folder.parent_folder_id,
+                created_at=folder.created_at.isoformat(),
+            )
+            for folder in folders
+        ]
+
+        return FoldersListResponse(
+            folders=folder_responses,
+            total=len(folder_responses),
+        )
+    except Exception as e:
+        logger.error(f"Error searching folders: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to search folders",
+        )
 
