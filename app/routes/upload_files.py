@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import logging
 import uuid
 import base64
@@ -36,6 +36,19 @@ class FileUploadResponse(BaseModel):
     upload_status: str
     fragments_stored: int
     erasure_profile: str
+
+class FileInfo(BaseModel):
+    file_id: str
+    file_name: str
+    file_size: int
+    logical_path: str
+    uploaded_at: str
+    version_id: Optional[str] = None
+    erasure_id: Optional[str] = None
+
+class FilesListResponse(BaseModel):
+    files: List[FileInfo]
+    total: int
 
 def get_current_account_from_master(token: str):
     """Get account info from master node API."""
@@ -128,17 +141,15 @@ def upload_file(
             )
         
         erasure_profile = erasure_response.json()
-        k_fragments = erasure_profile["k"]  # Data fragments
-        m_fragments = erasure_profile["m"]  # Parity fragments
+        k_fragments = erasure_profile["k"]
+        m_fragments = erasure_profile["m"]
         total_fragments = k_fragments + m_fragments
         fragment_size = erasure_profile["bytes"]
         
-        # Simple fragmentation (in production, use proper erasure coding)
-        fragments = []
+        # Simple fragmentation
         fragment_data_list = []
-        
-        # Split file into k data fragments
         data_per_fragment = len(file_data) // k_fragments
+
         for i in range(k_fragments):
             start = i * data_per_fragment
             end = start + data_per_fragment if i < k_fragments - 1 else len(file_data)
@@ -152,17 +163,16 @@ def upload_file(
             }
             fragment_data_list.append(fragment_info)
         
-        # TODO: Generate parity fragments using Reed-Solomon coding
-        # For now, just duplicate some data fragments as simple redundancy
+        # Mock parity: duplicate data fragments
         for i in range(m_fragments):
             source_fragment = fragment_data_list[i % k_fragments].copy()
             source_fragment["num_fragment"] = k_fragments + i
             fragment_data_list.append(source_fragment)
         
-        # Distribute fragments via master node
+        # Tell master node to assign storage nodes
         fragment_payload = {
             "version_id": version_id,
-            "segment_id": str(uuid.uuid4()),  # Single segment for now
+            "segment_id": str(uuid.uuid4()),
             "fragment_data": fragment_data_list,
             "erasure_id": upload_data.erasure_id
         }
@@ -178,7 +188,7 @@ def upload_file(
         distribution_result = distribute_response.json()
         distributed_fragments = distribution_result["fragments"]
         
-        # Store actual fragment data on storage nodes
+        # Upload fragments to storage nodes
         fragments_stored = 0
         for i, fragment_info in enumerate(fragment_data_list):
             if i >= len(distributed_fragments):
@@ -186,7 +196,6 @@ def upload_file(
                 
             dist_info = distributed_fragments[i]
             try:
-                # Send fragment data to assigned storage node
                 storage_payload = {
                     "fragmentId": dist_info["fragmentId"],
                     "data": fragment_info["data"],
@@ -213,7 +222,10 @@ def upload_file(
         if fragments_stored == 0:
             upload_status = "failed"
         
-        logger.info(f"File upload completed: {upload_data.filename}, fragments: {fragments_stored}/{len(fragment_data_list)}")
+        logger.info(
+            f"File upload completed: {upload_data.filename}, fragments: "
+            f"{fragments_stored}/{len(fragment_data_list)}"
+        )
         
         return FileUploadResponse(
             file_id=file_id,
@@ -225,12 +237,246 @@ def upload_file(
             fragments_stored=fragments_stored,
             erasure_profile=upload_data.erasure_id
         )
-        
+
     except HTTPException:
         raise
+
     except Exception as e:
-        logger.error(f"Error uploading file: {str(e)}")
+        logger.error(f"Unexpected error during file upload: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading file: {str(e)}"
+            detail=f"File upload failed: {str(e)}"
+        )
+
+
+
+@router.get("", response_model=FilesListResponse)
+def get_files(
+    folder_id: Optional[str] = Query(None, description="Filter by folder ID. If None, returns files in root."),
+    current_account: dict = Depends(get_current_account)
+):
+    """
+    Get all files for the current authenticated user.
+    Optionally filter by folder_id to get files in a specific folder.
+    """
+    try:
+        account_id = current_account["account_id"]
+        
+        # Build SQL query to get files
+        if folder_id:
+            # Files in a specific folder
+            sql = """
+                SELECT 
+                    fo.file_id, 
+                    fo.file_name, 
+                    fo.file_size, 
+                    fo.logical_path, 
+                    fo.uploaded_at,
+                    fv.version_id,
+                    fv.erasure_id
+                FROM file_objects fo
+                LEFT JOIN file_versions fv ON fo.file_id = fv.file_id
+                WHERE fo.account_id = $1 
+                    AND fo.logical_path LIKE $2
+                ORDER BY fo.uploaded_at DESC
+            """
+            # Match files in the folder (logical_path like '/folders/{folder_id}/%')
+            folder_path_pattern = f"/folders/{folder_id}/%"
+            params = [str(account_id), folder_path_pattern]
+        else:
+            # Files in root (not in any folder)
+            sql = """
+                SELECT 
+                    fo.file_id, 
+                    fo.file_name, 
+                    fo.file_size, 
+                    fo.logical_path, 
+                    fo.uploaded_at,
+                    fv.version_id,
+                    fv.erasure_id
+                FROM file_objects fo
+                LEFT JOIN file_versions fv ON fo.file_id = fv.file_id
+                WHERE fo.account_id = $1 
+                    AND fo.logical_path NOT LIKE '/folders/%'
+                ORDER BY fo.uploaded_at DESC
+            """
+            params = [str(account_id)]
+        
+        # Query master node
+        response = requests.post(f"{MASTER_NODE_URL}/query", json={
+            "sql": sql,
+            "params": params
+        }, timeout=30)
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to query files from master node: {response.text}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve files"
+            )
+        
+        result = response.json()
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to retrieve files")
+            )
+        
+        files_data = result.get("data", [])
+        
+        file_list = []
+        for f in files_data:
+            # Handle timestamp conversion
+            uploaded_at = f["uploaded_at"]
+            if isinstance(uploaded_at, str):
+                uploaded_at_str = uploaded_at
+            else:
+                # If it's a datetime object, convert to ISO format
+                uploaded_at_str = uploaded_at.isoformat() if hasattr(uploaded_at, "isoformat") else str(uploaded_at)
+            
+            file_list.append(FileInfo(
+                file_id=str(f["file_id"]),
+                file_name=f["file_name"],
+                file_size=int(f["file_size"]),
+                logical_path=f["logical_path"],
+                uploaded_at=uploaded_at_str,
+                version_id=str(f["version_id"]) if f.get("version_id") else None,
+                erasure_id=f.get("erasure_id")
+            ))
+        
+        return FilesListResponse(
+            files=file_list,
+            total=len(file_list)
+        )
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error connecting to master node: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Master node unavailable"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve files"
+        )
+
+
+@router.get("/{file_name}", response_model=FileInfo)
+def get_file(
+    file_name: str,
+    folder_id: Optional[str] = Query(None, description="Optional folder ID to disambiguate when multiple files have the same name"),
+    current_account: dict = Depends(get_current_account)
+):
+    """
+    Get a specific file by name for the current authenticated user.
+    If multiple files have the same name, use folder_id to specify which one.
+    """
+    try:
+        account_id = current_account["account_id"]
+        
+        # Build SQL query based on whether folder_id is provided
+        if folder_id:
+            # File in a specific folder
+            sql = """
+                SELECT 
+                    fo.file_id, 
+                    fo.file_name, 
+                    fo.file_size, 
+                    fo.logical_path, 
+                    fo.uploaded_at,
+                    fv.version_id,
+                    fv.erasure_id
+                FROM file_objects fo
+                LEFT JOIN file_versions fv ON fo.file_id = fv.file_id
+                WHERE fo.file_name = $1 
+                    AND fo.account_id = $2
+                    AND fo.logical_path LIKE $3
+                ORDER BY fo.uploaded_at DESC
+            """
+            folder_path_pattern = f"/folders/{folder_id}/%"
+            params = [file_name, str(account_id), folder_path_pattern]
+        else:
+            # File in root or search all locations (will return first match)
+            sql = """
+                SELECT 
+                    fo.file_id, 
+                    fo.file_name, 
+                    fo.file_size, 
+                    fo.logical_path, 
+                    fo.uploaded_at,
+                    fv.version_id,
+                    fv.erasure_id
+                FROM file_objects fo
+                LEFT JOIN file_versions fv ON fo.file_id = fv.file_id
+                WHERE fo.file_name = $1 AND fo.account_id = $2
+                ORDER BY fo.uploaded_at DESC
+            """
+            params = [file_name, str(account_id)]
+        
+        response = requests.post(f"{MASTER_NODE_URL}/query", json={
+            "sql": sql,
+            "params": params
+        }, timeout=30)
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to query file from master node: {response.text}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve file"
+            )
+        
+        result = response.json()
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Failed to retrieve file")
+            )
+        
+        files_data = result.get("data", [])
+        if not files_data:
+            error_msg = f"File '{file_name}' not found"
+            if folder_id:
+                error_msg += f" in folder {folder_id}"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_msg
+            )
+        
+        # Check if there are multiple files with the same name
+        if len(files_data) > 1 and folder_id is None:
+            logger.warning(f"Multiple files found with name '{file_name}'. Returning first match. Consider using folder_id parameter.")
+        
+        f = files_data[0]
+        # Handle timestamp conversion
+        uploaded_at = f["uploaded_at"]
+        if isinstance(uploaded_at, str):
+            uploaded_at_str = uploaded_at
+        else:
+            uploaded_at_str = uploaded_at.isoformat() if hasattr(uploaded_at, "isoformat") else str(uploaded_at)
+        
+        return FileInfo(
+            file_id=str(f["file_id"]),
+            file_name=f["file_name"],
+            file_size=int(f["file_size"]),
+            logical_path=f["logical_path"],
+            uploaded_at=uploaded_at_str,
+            version_id=str(f["version_id"]) if f.get("version_id") else None,
+            erasure_id=f.get("erasure_id")
+        )
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error connecting to master node: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Master node unavailable"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve file"
         )

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     test_database_url: str = Field(validation_alias=AliasChoices("test_database_url", "TEST_DATABASE_URL"))
     jwt_secret_key: str = "testsecret"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = Field(default=30, validation_alias=AliasChoices("access_token_expire_minutes", "ACCESS_TOKEN_EXPIRE_MINUTES"))
 
     model_config = ConfigDict(
         env_file=str(ENV_FILE),
