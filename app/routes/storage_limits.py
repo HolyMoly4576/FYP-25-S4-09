@@ -1,14 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 from pydantic import BaseModel
 from typing import Optional
 import logging
 
-from app.db.session import get_db
-from app.models import Account, FreeAccount, PaidAccount
 from app.core.security import decode_access_token
 from app.routes.login import oauth2_scheme
+from app.master_node_db import MasterNodeDB, get_master_db
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,40 +29,48 @@ class StorageUsageResponse(BaseModel):
 
 def get_current_account(
     token=Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> Account:
-    """Get the current authenticated account."""
+    master_db: MasterNodeDB = Depends(get_master_db)
+) -> dict:
+    """Get the current authenticated account from master node."""
     token_str = token.credentials if hasattr(token, "credentials") else token
     payload = decode_access_token(token_str)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+    
     account_id = payload.get("sub")
     if not account_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
-    account = db.query(Account).filter(Account.account_id == account_id).first()
-    if not account:
+    
+    # Query via master node
+    account_result = master_db.select(
+        "SELECT account_id, username, email, account_type, created_at FROM account WHERE account_id = $1",
+        [account_id]
+    )
+    
+    if not account_result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return account
-
+    
+    return account_result[0]  # Returns dict instead of SQLAlchemy Account object
 
 
 
 @router.get("/usage", response_model=StorageUsageResponse)
 def get_storage_usage(
-    current_account: Account = Depends(get_current_account),
-    db: Session = Depends(get_db)
+    current_account: dict = Depends(get_current_account),
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
     """
     Get storage usage for the current authenticated user.
     Returns used storage, limit, remaining space, and usage percentage.
     """
     try:
-        # Calculate used storage
-        result = db.execute(
-            text("SELECT COALESCE(SUM(file_size), 0) FROM file_objects WHERE account_id = :account_id"),
-            {"account_id": str(current_account.account_id)}
+        # Calculate used storage via master node
+        result = master_db.select(
+            "SELECT COALESCE(SUM(file_size), 0) as total FROM file_objects WHERE account_id = $1",
+            [str(current_account["account_id"])]
         )
-        used_bytes = int(result.scalar() or 0)
+        
+        used_bytes = int(result[0]["total"]) if result else 0
         used_gb = used_bytes / (1024 ** 3)
         
         # Get storage limit based on account type
@@ -72,24 +78,37 @@ def get_storage_usage(
         monthly_cost = None
         renewal_date = None
         
-        if current_account.account_type == "FREE":
-            free_account = db.query(FreeAccount).filter(
-                FreeAccount.account_id == current_account.account_id
-            ).first()
+        if current_account["account_type"] == "FREE":
+            # Query free_account table via master node
+            free_account = master_db.select(
+                "SELECT storage_limit_gb FROM free_account WHERE account_id = $1",
+                [current_account["account_id"]]
+            )
+            
             if free_account:
-                storage_limit_gb = free_account.storage_limit_gb
+                storage_limit_gb = free_account[0]["storage_limit_gb"]
             else:
                 # Default for free accounts
                 storage_limit_gb = 2
-        elif current_account.account_type == "PAID":
-            paid_account = db.query(PaidAccount).filter(
-                PaidAccount.account_id == current_account.account_id
-            ).first()
+        
+        elif current_account["account_type"] == "PAID":
+            # Query paid_account table via master node
+            paid_account = master_db.select(
+                "SELECT storage_limit_gb, monthly_cost, renewal_date FROM paid_account WHERE account_id = $1",
+                [current_account["account_id"]]
+            )
+            
             if paid_account:
-                storage_limit_gb = paid_account.storage_limit_gb
-                monthly_cost = float(paid_account.monthly_cost)
-                if paid_account.renewal_date:
-                    renewal_date = paid_account.renewal_date.isoformat()
+                storage_limit_gb = paid_account[0]["storage_limit_gb"]
+                monthly_cost = float(paid_account[0]["monthly_cost"])
+                
+                # Handle renewal_date formatting
+                renewal_date_value = paid_account[0].get("renewal_date")
+                if renewal_date_value:
+                    if hasattr(renewal_date_value, "isoformat"):
+                        renewal_date = renewal_date_value.isoformat()
+                    else:
+                        renewal_date = str(renewal_date_value)
             else:
                 # Default for paid accounts
                 storage_limit_gb = 30
@@ -104,8 +123,8 @@ def get_storage_usage(
         usage_percentage = (used_bytes / storage_limit_bytes * 100) if storage_limit_bytes > 0 else 0
         
         return StorageUsageResponse(
-            account_id=str(current_account.account_id),
-            account_type=current_account.account_type,
+            account_id=str(current_account["account_id"]),
+            account_type=current_account["account_type"],
             used_bytes=used_bytes,
             used_gb=round(used_gb, 2),
             storage_limit_gb=storage_limit_gb,
@@ -116,10 +135,10 @@ def get_storage_usage(
             monthly_cost=monthly_cost,
             renewal_date=renewal_date
         )
+    
     except Exception as e:
         logger.error(f"Error getting storage usage: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving storage usage: {str(e)}"
         )
-

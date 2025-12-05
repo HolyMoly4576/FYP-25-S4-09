@@ -1,12 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 import logging
 
-from app.db.session import get_db
-from app.models import Account
 from app.core.security import get_password_hash, verify_password
-from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
+from app.master_node_db import MasterNodeDB, get_master_db
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +29,19 @@ class ResetPasswordResponse(BaseModel):
     message: str
 
 
-def get_account_by_email(db: Session, email: str):
-    """Get account by email."""
-    return db.query(Account).filter(Account.email == email.lower()).first()
+def get_account_by_email(master_db: MasterNodeDB, email: str):
+    """Get account by email via master node."""
+    result = master_db.select(
+        "SELECT account_id, username, email, password_hash, account_type, created_at FROM account WHERE LOWER(email) = LOWER($1)",
+        [email]
+    )
+    return result[0] if result else None
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
 def forgot_password(
     body: ForgotPasswordRequest,
-    db: Session = Depends(get_db)
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
     """
     Verify email for password reset (Alpha version).
@@ -47,11 +49,10 @@ def forgot_password(
     For beta release: will send password reset link via email.
     """
     try:
-        # Normalize email to lowercase
         email_lower = body.email.lower()
         
-        # Check if account exists with this email
-        account = get_account_by_email(db, email_lower)
+        # Check if account exists with this email via master node
+        account = get_account_by_email(master_db, email_lower)
         
         if account:
             # Email exists - verified
@@ -67,6 +68,7 @@ def forgot_password(
                 message="Email not found in our system.",
                 email_verified=False
             )
+    
     except Exception as e:
         logger.error(f"Error in forgot password: {str(e)}")
         raise HTTPException(
@@ -79,7 +81,7 @@ def forgot_password(
 def reset_password(
     body: ResetPasswordRequest,
     request: Request,
-    db: Session = Depends(get_db)
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
     """
     Reset password after email verification (Alpha version).
@@ -87,7 +89,6 @@ def reset_password(
     For beta release: will require token instead of email.
     """
     try:
-        # Normalize email to lowercase
         email_lower = body.email.lower()
         
         # Validate password
@@ -97,9 +98,8 @@ def reset_password(
                 detail="Password must be at least 6 characters long"
             )
         
-        # Find account by email
-        account = get_account_by_email(db, email_lower)
-        
+        # Find account by email via master node
+        account = get_account_by_email(master_db, email_lower)
         if not account:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -107,41 +107,54 @@ def reset_password(
             )
         
         # Check if new password is different from current
-        if verify_password(body.new_password, account.password_hash):
+        if verify_password(body.new_password, account["password_hash"]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password must be different from current password"
             )
         
-        # Update password
-        account.password_hash = get_password_hash(body.new_password)
-        db.commit()
-        db.refresh(account)
-        
-        # Log password reset activity
-        log_activity(
-            db=db,
-            account_id=account.account_id,
-            action_type="PASSWORD_RESET",
-            resource_type="ACCOUNT",
-            resource_id=account.account_id,
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
-            details={"method": "email_verification"}  # Alpha version
+        # Update password via master node
+        new_password_hash = get_password_hash(body.new_password)
+        master_db.execute(
+            "UPDATE account SET password_hash = $1 WHERE account_id = $2",
+            [new_password_hash, account["account_id"]]
         )
         
-        logger.info(f"Password reset successful for account: {account.account_id}")
+        # Log password reset activity via master node
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "unknown")
+            
+            master_db.execute(
+                """
+                INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                """,
+                [
+                    str(uuid.uuid4()),
+                    str(account["account_id"]),
+                    "PASSWORD_RESET",
+                    "ACCOUNT",
+                    str(account["account_id"]),
+                    client_ip,
+                    user_agent,
+                    '{"method": "email_verification"}'
+                ]
+            )
+        except Exception as log_error:
+            # Don't fail the password reset if activity logging fails
+            logger.warning(f"Failed to log password reset activity: {str(log_error)}")
         
+        logger.info(f"Password reset successful for account: {account['account_id']}")
         return ResetPasswordResponse(
             message="Password has been successfully reset. You can now login with your new password."
         )
+    
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Error resetting password: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error resetting password"
         )
-

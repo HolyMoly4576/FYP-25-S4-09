@@ -1,4 +1,4 @@
-version: '3.8'
+# version: '3.8'
 
 # YAML anchors for common configurations
 x-common-environment: &common-environment

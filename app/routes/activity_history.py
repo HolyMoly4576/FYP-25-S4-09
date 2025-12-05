@@ -1,13 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date, timezone
 import logging
+import json
 
-from app.db.session import get_db
-from app.models import Account, ActivityLog
+from app.master_node_db import MasterNodeDB, get_master_db
 from app.core.security import decode_access_token
 from app.routes.login import oauth2_scheme
 
@@ -37,20 +35,27 @@ class ActivityHistoryResponse(BaseModel):
 
 def get_current_account(
     token=Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> Account:
-    """Get the current authenticated account."""
+    master_db: MasterNodeDB = Depends(get_master_db)
+) -> dict:
+    """Get the current authenticated account from master node."""
     token_str = token.credentials if hasattr(token, "credentials") else token
     payload = decode_access_token(token_str)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+    
     account_id = payload.get("sub")
     if not account_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
-    account = db.query(Account).filter(Account.account_id == account_id).first()
-    if not account:
+    
+    account_result = master_db.select(
+        "SELECT account_id, username, email, account_type, created_at FROM account WHERE account_id = $1",
+        [account_id]
+    )
+    
+    if not account_result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return account
+    
+    return account_result[0]
 
 
 @router.get("/history", response_model=ActivityHistoryResponse)
@@ -59,20 +64,22 @@ def get_activity_history(
     action_type: Optional[str] = Query(None, description="Filter by action type (e.g., 'LOGIN', 'FILE_UPLOAD')"),
     limit: int = Query(50, ge=1, le=200, description="Number of activities to return"),
     offset: int = Query(0, ge=0, description="Number of activities to skip"),
-    current_account: Account = Depends(get_current_account),
-    db: Session = Depends(get_db)
+    current_account: dict = Depends(get_current_account),
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
     """
     Get activity history for the current authenticated user.
     Supports filtering by date and action type.
     """
     try:
-        # Base query - only activities for current user
-        query = db.query(ActivityLog).filter(
-            ActivityLog.account_id == current_account.account_id
-        )
+        # Build SQL query with filters
+        sql_conditions = ["account_id = $1"]
+        params = [current_account["account_id"]]
+        param_index = 2
         
         # Apply date filter if provided
+        start_datetime = None
+        end_datetime = None
         if date_filter:
             try:
                 # Parse date string (YYYY-MM-DD)
@@ -81,12 +88,14 @@ def get_activity_history(
                 start_datetime = datetime.combine(filter_date, datetime.min.time()).replace(tzinfo=timezone.utc)
                 end_datetime = datetime.combine(filter_date, datetime.max.time()).replace(tzinfo=timezone.utc)
                 
-                query = query.filter(
-                    and_(
-                        ActivityLog.created_at >= start_datetime,
-                        ActivityLog.created_at <= end_datetime
-                    )
-                )
+                sql_conditions.append(f"created_at >= ${param_index}")
+                params.append(start_datetime)
+                param_index += 1
+                
+                sql_conditions.append(f"created_at <= ${param_index}")
+                params.append(end_datetime)
+                param_index += 1
+                
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -95,26 +104,58 @@ def get_activity_history(
         
         # Apply action type filter if provided
         if action_type:
-            query = query.filter(ActivityLog.action_type == action_type.upper())
+            sql_conditions.append(f"action_type = ${param_index}")
+            params.append(action_type.upper())
+            param_index += 1
         
-        # Get total count before pagination
-        total = query.count()
+        # Build WHERE clause
+        where_clause = " AND ".join(sql_conditions)
         
-        # Apply pagination and ordering (newest first)
-        activities = query.order_by(ActivityLog.created_at.desc()).offset(offset).limit(limit).all()
+        # Get total count via master node
+        count_sql = f"SELECT COUNT(*) as total FROM activity_log WHERE {where_clause}"
+        count_result = master_db.select(count_sql, params)
+        total = int(count_result[0]["total"]) if count_result else 0
+        
+        # Get activities with pagination via master node
+        activities_sql = f"""
+            SELECT log_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at
+            FROM activity_log
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ${param_index} OFFSET ${param_index + 1}
+        """
+        params.extend([limit, offset])
+        
+        activities = master_db.select(activities_sql, params)
         
         # Convert to response format
         activity_list = []
         for activity in activities:
+            # Handle details field (might be JSON or dict)
+            details_value = activity.get("details")
+            if isinstance(details_value, str):
+                import json
+                try:
+                    details_value = json.loads(details_value)
+                except:
+                    details_value = None
+            
+            # Format created_at
+            created_at = activity["created_at"]
+            if hasattr(created_at, "isoformat"):
+                created_at_str = created_at.isoformat()
+            else:
+                created_at_str = str(created_at)
+            
             activity_list.append(ActivityDetail(
-                activity_id=str(activity.activity_id),
-                action_type=activity.action_type,
-                resource_type=activity.resource_type,
-                resource_id=str(activity.resource_id) if activity.resource_id else None,
-                ip_address=activity.ip_address,
-                user_agent=activity.user_agent,
-                details=activity.details if activity.details else None,
-                created_at=activity.created_at.isoformat()
+                activity_id=str(activity["log_id"]),
+                action_type=activity["action_type"],
+                resource_type=activity.get("resource_type"),
+                resource_id=str(activity["resource_id"]) if activity.get("resource_id") else None,
+                ip_address=activity.get("ip_address"),
+                user_agent=activity.get("user_agent"),
+                details=details_value,
+                created_at=created_at_str
             ))
         
         return ActivityHistoryResponse(
@@ -124,6 +165,7 @@ def get_activity_history(
             offset=offset,
             date_filter=date_filter
         )
+    
     except HTTPException:
         raise
     except Exception as e:
@@ -132,4 +174,3 @@ def get_activity_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving activity history: {str(e)}"
         )
-

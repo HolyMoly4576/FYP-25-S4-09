@@ -1,28 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 import logging
-
-from app.db.session import get_db
-from app.models import Account, FreeAccount, PaidAccount
 from app.core.security import decode_access_token
-from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
+from app.master_node_db import MasterNodeDB, get_master_db
+import uuid
+import json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/account", tags=["account management"])
 
-
 class UpgradeAccountRequest(BaseModel):
-    monthly_cost: float  # User chooses how much they want to pay per month
-
+    monthly_cost: float
 
 class DowngradeAccountRequest(BaseModel):
-    confirm: bool = True  # Confirmation flag for downgrade
-
+    confirm: bool = True
 
 class UpgradeAccountResponse(BaseModel):
     account_id: str
@@ -32,62 +27,66 @@ class UpgradeAccountResponse(BaseModel):
     renewal_date: str
     message: str
 
-
 class DowngradeAccountResponse(BaseModel):
     account_id: str
     account_type: str
     storage_limit_gb: int
     message: str
 
-
 def get_current_account(
     token=Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
-) -> Account:
-    """Get the current authenticated account."""
+    master_db: MasterNodeDB = Depends(get_master_db)
+) -> dict:
     token_str = token.credentials if hasattr(token, "credentials") else token
     payload = decode_access_token(token_str)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+    
     account_id = payload.get("sub")
     if not account_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
-    account = db.query(Account).filter(Account.account_id == account_id).first()
-    if not account:
+    
+    account_result = master_db.select(
+        "SELECT account_id, username, email, account_type, created_at FROM account WHERE account_id = $1",
+        [account_id]
+    )
+    
+    if not account_result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return account
+    
+    result = account_result[0]
+    # Convert datetime objects to ISO strings and ensure account_id is a string
+    for k, v in result.items():
+        if isinstance(v, datetime):
+            result[k] = v.isoformat()
+        elif k == "account_id":
+            result[k] = str(v)
+    
+    return result
 
+def _json_default_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return str(obj)
+
+def safe_json_dumps(data: dict) -> str:
+    return json.dumps(data, default=_json_default_serializer)
 
 @router.post("/upgrade", response_model=UpgradeAccountResponse)
 def upgrade_to_paid(
     body: UpgradeAccountRequest,
     request: Request,
-    current_account: Account = Depends(get_current_account),
-    db: Session = Depends(get_db)
+    current_account: dict = Depends(get_current_account),
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
-    """
-    Upgrade a FREE account to PAID, or update payment plan for existing PAID accounts.
-    User can choose their monthly cost, which determines storage limit.
-    Formula: storage_limit_gb = monthly_cost * 3
-    
-    For FREE accounts, this will:
-    1. Change account_type from FREE to PAID
-    2. Delete the FreeAccount record
-    3. Create a PaidAccount record with chosen monthly_cost
-    
-    For PAID accounts, this will:
-    1. Update the existing PaidAccount record with new monthly_cost
-    2. Recalculate storage_limit_gb based on new monthly_cost
-    3. Reset renewal_date to 30 days from now
-    """
-    # Validate monthly_cost
     if body.monthly_cost <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Monthly cost must be greater than 0"
         )
     
-    # Minimum monthly cost
     if body.monthly_cost < 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -95,130 +94,151 @@ def upgrade_to_paid(
         )
     
     try:
-        # Calculate storage limit: monthly_cost * 3 = GB
         storage_limit_gb = int(body.monthly_cost * 3)
-        paid_account = None
         message = ""
+        now = datetime.now(timezone.utc)
+        renewal_date = now + timedelta(days=30)
         
-        if current_account.account_type == "FREE":
-            # FREE account upgrading to PAID
-            # Get FreeAccount record (should exist for FREE accounts)
-            free_account = db.query(FreeAccount).filter(
-                FreeAccount.account_id == current_account.account_id
-            ).first()
-            
-            # Update account type to PAID
-            current_account.account_type = "PAID"
-            
-            # Delete FreeAccount record if it exists
-            if free_account:
-                db.delete(free_account)
-            
-            # Create PaidAccount record
-            now = datetime.now(timezone.utc)
-            renewal_date = now + timedelta(days=30)  # 1 month from now
-            
-            paid_account = PaidAccount(
-                account_id=current_account.account_id,
-                storage_limit_gb=storage_limit_gb,
-                monthly_cost=Decimal(str(body.monthly_cost)),
-                start_date=now,
-                renewal_date=renewal_date,
-                status="ACTIVE"
+        # Convert datetime to ISO strings for JSON serialization
+        now_iso = now.isoformat()
+        renewal_date_iso = renewal_date.isoformat()
+        
+        # Ensure account_id is a string
+        account_id = str(current_account["account_id"])
+        
+        account_type = current_account["account_type"].upper() if current_account.get("account_type") else "FREE"
+        
+        if account_type == "FREE":
+            master_db.execute(
+                "UPDATE account SET account_type = $1 WHERE account_id = $2",
+                ["PAID", account_id]
             )
-            db.add(paid_account)
             
-            # Log upgrade activity
-            log_activity(
-                db=db,
-                account_id=current_account.account_id,
-                action_type="ACCOUNT_UPGRADE",
-                resource_type="ACCOUNT",
-                resource_id=current_account.account_id,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                details={
+            master_db.execute(
+                "DELETE FROM free_account WHERE account_id = $1",
+                [account_id]
+            )
+            
+            master_db.execute(
+                """
+                INSERT INTO paid_account (account_id, storage_limit_gb, monthly_cost, start_date, renewal_date, status)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                [account_id, storage_limit_gb, body.monthly_cost, now_iso, renewal_date_iso, "ACTIVE"]
+            )
+            
+            try:
+                client_ip = request.client.host if request.client else "unknown"
+                user_agent = request.headers.get("user-agent", "unknown")
+                
+                details = safe_json_dumps({
                     "from": "FREE",
                     "to": "PAID",
-                    "monthly_cost": body.monthly_cost,
-                    "storage_limit_gb": storage_limit_gb,
-                    "renewal_date": renewal_date.isoformat()
-                }
-            )
+                    "monthly_cost": float(body.monthly_cost),
+                    "storage_limit_gb": int(storage_limit_gb),
+                    "renewal_date": renewal_date
+                })
+                
+                master_db.execute(
+                    """
+                    INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                    """,
+                    [str(uuid.uuid4()), account_id, "ACCOUNT_UPGRADE", "ACCOUNT",
+                     account_id, client_ip, user_agent, details]
+                )
+            except Exception as log_error:
+                logger.warning(f"Failed to log upgrade activity: {str(log_error)}")
             
             message = f"Account upgraded to PAID! You now have {storage_limit_gb}GB storage for ${body.monthly_cost}/month. Renewal date: {renewal_date.strftime('%Y-%m-%d')}"
-            
-        elif current_account.account_type == "PAID":
-            # PAID account updating payment plan
-            paid_account = db.query(PaidAccount).filter(
-                PaidAccount.account_id == current_account.account_id
-            ).first()
-            
-            if not paid_account:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="PaidAccount record not found"
-                )
-            
-            # Store old values for logging
-            old_monthly_cost = float(paid_account.monthly_cost)
-            old_storage_limit = paid_account.storage_limit_gb
-            
-            # Update payment plan
-            now = datetime.now(timezone.utc)
-            paid_account.monthly_cost = Decimal(str(body.monthly_cost))
-            paid_account.storage_limit_gb = storage_limit_gb
-            paid_account.renewal_date = now + timedelta(days=30)  # Reset renewal date
-            paid_account.status = "ACTIVE"
-            
-            # Log plan update activity
-            log_activity(
-                db=db,
-                account_id=current_account.account_id,
-                action_type="PAYMENT_PLAN_UPDATE",
-                resource_type="ACCOUNT",
-                resource_id=current_account.account_id,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                details={
-                    "old_monthly_cost": old_monthly_cost,
-                    "new_monthly_cost": body.monthly_cost,
-                    "old_storage_limit_gb": old_storage_limit,
-                    "new_storage_limit_gb": storage_limit_gb,
-                    "renewal_date": paid_account.renewal_date.isoformat()
-                }
+        
+        elif account_type == "PAID":
+            paid_account = master_db.select(
+                "SELECT storage_limit_gb, monthly_cost FROM paid_account WHERE account_id = $1",
+                [account_id]
             )
             
-            message = f"Payment plan updated! You now have {storage_limit_gb}GB storage for ${body.monthly_cost}/month. Renewal date: {paid_account.renewal_date.strftime('%Y-%m-%d')}"
-            
+            if not paid_account or len(paid_account) == 0:
+                logger.warning(f"Account {account_id} has type PAID but no paid_account record. Creating record.")
+                
+                master_db.execute(
+                    """
+                    INSERT INTO paid_account (account_id, storage_limit_gb, monthly_cost, start_date, renewal_date, status)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    [account_id, storage_limit_gb, body.monthly_cost, now_iso, renewal_date_iso, "ACTIVE"]
+                )
+                
+                message = f"Payment plan created! You now have {storage_limit_gb}GB storage for ${body.monthly_cost}/month. Renewal date: {renewal_date.strftime('%Y-%m-%d')}"
+            else:
+                old_monthly_cost = paid_account[0]["monthly_cost"]
+                old_storage_limit = paid_account[0]["storage_limit_gb"]
+                
+                master_db.execute(
+                    """
+                    UPDATE paid_account
+                    SET monthly_cost = $1, storage_limit_gb = $2, renewal_date = $3, status = $4
+                    WHERE account_id = $5
+                    """,
+                    [body.monthly_cost, storage_limit_gb, renewal_date_iso, "ACTIVE", account_id]
+                )
+                
+                try:
+                    client_ip = request.client.host if request.client else "unknown"
+                    user_agent = request.headers.get("user-agent", "unknown")
+                    
+                    details = safe_json_dumps({
+                        "old_monthly_cost": float(old_monthly_cost),
+                        "new_monthly_cost": float(body.monthly_cost),
+                        "old_storage_limit_gb": int(old_storage_limit),
+                        "new_storage_limit_gb": int(storage_limit_gb),
+                        "renewal_date": renewal_date
+                    })
+                    
+                    master_db.execute(
+                        """
+                        INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                        """,
+                        [str(uuid.uuid4()), account_id, "PAYMENT_PLAN_UPDATE", "ACCOUNT",
+                         account_id, client_ip, user_agent, details]
+                    )
+                except Exception as log_error:
+                    logger.warning(f"Failed to log plan update activity: {str(log_error)}")
+                
+                message = f"Payment plan updated! You now have {storage_limit_gb}GB storage for ${body.monthly_cost}/month. Renewal date: {renewal_date.strftime('%Y-%m-%d')}"
+        
         else:
-            # SYSADMIN or other account types
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot upgrade {current_account.account_type} accounts"
+                detail=f"Cannot upgrade {account_type} accounts"
             )
         
-        db.commit()
-        db.refresh(current_account)
-        if paid_account:
-            db.refresh(paid_account)
-        
         return UpgradeAccountResponse(
-            account_id=str(current_account.account_id),
-            account_type=current_account.account_type,
+            account_id=account_id,
+            account_type="PAID",
             storage_limit_gb=storage_limit_gb,
             monthly_cost=body.monthly_cost,
-            renewal_date=paid_account.renewal_date.isoformat() if paid_account else "",
+            renewal_date=renewal_date_iso,
             message=message
         )
+    
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
-        logger.error(f"Error upgrading account: {str(e)}")
+        logger.error(f"Error upgrading account: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # Provide safe error message without exposing non-serializable objects
+        error_msg = str(e) if e and isinstance(str(e), str) else "Unknown error"
+        # Limit error message length to avoid issues
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error upgrading account: {str(e)}"
+            detail=f"Error upgrading account: {error_msg}"
         )
 
 
@@ -226,26 +246,15 @@ def upgrade_to_paid(
 def downgrade_to_free(
     body: DowngradeAccountRequest,
     request: Request,
-    current_account: Account = Depends(get_current_account),
-    db: Session = Depends(get_db)
+    current_account: dict = Depends(get_current_account),
+    master_db: MasterNodeDB = Depends(get_master_db)
 ):
-    """
-    Downgrade a PAID account to FREE.
-    User will lose paid features and storage will be reduced to 2GB (free tier).
-    
-    This will:
-    1. Change account_type from PAID to FREE
-    2. Delete the PaidAccount record
-    3. Create a FreeAccount record with 2GB storage limit
-    """
-    # Only PAID accounts can downgrade
-    if current_account.account_type != "PAID":
+    if current_account["account_type"] != "PAID":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only PAID accounts can downgrade. Your account is currently {current_account.account_type}."
+            detail=f"Only PAID accounts can downgrade. Your account is currently {current_account['account_type']}."
         )
     
-    # Require confirmation
     if not body.confirm:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -253,63 +262,67 @@ def downgrade_to_free(
         )
     
     try:
-        # Get PaidAccount record (should exist for PAID accounts)
-        paid_account = db.query(PaidAccount).filter(
-            PaidAccount.account_id == current_account.account_id
-        ).first()
+        # Ensure account_id is a string
+        account_id = str(current_account["account_id"])
         
-        # Store old values for logging
-        old_monthly_cost = float(paid_account.monthly_cost) if paid_account else None
-        old_storage_limit = paid_account.storage_limit_gb if paid_account else None
-        
-        # Update account type to FREE
-        current_account.account_type = "FREE"
-        
-        # Delete PaidAccount record if it exists
-        if paid_account:
-            db.delete(paid_account)
-        
-        # Create FreeAccount record with default 2GB storage
-        free_account = FreeAccount(
-            account_id=current_account.account_id,
-            storage_limit_gb=2  # Default 2GB for free accounts
+        paid_account = master_db.select(
+            "SELECT storage_limit_gb, monthly_cost FROM paid_account WHERE account_id = $1",
+            [account_id]
         )
-        db.add(free_account)
-        db.commit()
-        db.refresh(current_account)
-        db.refresh(free_account)
         
-        # Log downgrade activity
-        log_activity(
-            db=db,
-            account_id=current_account.account_id,
-            action_type="ACCOUNT_DOWNGRADE",
-            resource_type="ACCOUNT",
-            resource_id=current_account.account_id,
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
-            details={
+        old_monthly_cost = float(paid_account[0]["monthly_cost"]) if paid_account else None
+        old_storage_limit = paid_account[0]["storage_limit_gb"] if paid_account else None
+        
+        master_db.execute(
+            "UPDATE account SET account_type = $1 WHERE account_id = $2",
+            ["FREE", account_id]
+        )
+        
+        master_db.execute(
+            "DELETE FROM paid_account WHERE account_id = $1",
+            [account_id]
+        )
+        
+        master_db.execute(
+            "INSERT INTO free_account (account_id, storage_limit_gb) VALUES ($1, $2)",
+            [account_id, 2]
+        )
+        
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "unknown")
+            
+            details = safe_json_dumps({
                 "from": "PAID",
                 "to": "FREE",
-                "old_monthly_cost": old_monthly_cost,
+                "old_monthly_cost": float(old_monthly_cost) if old_monthly_cost else None,
                 "old_storage_limit_gb": old_storage_limit,
                 "new_storage_limit_gb": 2
-            }
-        )
+            })
+            
+            master_db.execute(
+                """
+                INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                """,
+                [str(uuid.uuid4()), account_id, "ACCOUNT_DOWNGRADE", "ACCOUNT",
+                 account_id, client_ip, user_agent, details]
+            )
+        except Exception as log_error:
+            logger.warning(f"Failed to log downgrade activity: {str(log_error)}")
         
         return DowngradeAccountResponse(
-            account_id=str(current_account.account_id),
-            account_type=current_account.account_type,
-            storage_limit_gb=free_account.storage_limit_gb,
+            account_id=account_id,
+            account_type="FREE",
+            storage_limit_gb=2,
             message="Account downgraded to FREE. Your storage limit is now 2GB. You can upgrade again anytime."
         )
+    
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Error downgrading account: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error downgrading account: {str(e)}"
         )
-
