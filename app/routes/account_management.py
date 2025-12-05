@@ -141,7 +141,7 @@ def upgrade_to_paid(
                 
                 master_db.execute(
                     """
-                    INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                    INSERT INTO activity_log (activity_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                     """,
                     [str(uuid.uuid4()), account_id, "ACCOUNT_UPGRADE", "ACCOUNT",
@@ -197,7 +197,7 @@ def upgrade_to_paid(
                     
                     master_db.execute(
                         """
-                        INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                        INSERT INTO activity_log (activity_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                         """,
                         [str(uuid.uuid4()), account_id, "PAYMENT_PLAN_UPDATE", "ACCOUNT",
@@ -302,7 +302,7 @@ def downgrade_to_free(
             
             master_db.execute(
                 """
-                INSERT INTO activity_log (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+                INSERT INTO activity_log (activity_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
                 """,
                 [str(uuid.uuid4()), account_id, "ACCOUNT_DOWNGRADE", "ACCOUNT",

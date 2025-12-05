@@ -118,7 +118,7 @@ def get_activity_history(
         
         # Get activities with pagination via master node
         activities_sql = f"""
-            SELECT log_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at
+            SELECT activity_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at
             FROM activity_log
             WHERE {where_clause}
             ORDER BY created_at DESC
@@ -148,7 +148,7 @@ def get_activity_history(
                 created_at_str = str(created_at)
             
             activity_list.append(ActivityDetail(
-                activity_id=str(activity["log_id"]),
+                activity_id=str(activity["activity_id"]),
                 action_type=activity["action_type"],
                 resource_type=activity.get("resource_type"),
                 resource_id=str(activity["resource_id"]) if activity.get("resource_id") else None,

@@ -132,7 +132,7 @@ def login(
 		# Log login activity via Master Node
 		try:
 			login_log_sql = """
-				INSERT INTO ACTIVITY_LOG (log_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
+				INSERT INTO activity_log (activity_id, account_id, action_type, resource_type, resource_id, ip_address, user_agent, details, created_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
 			"""
 			log_details = f'{{"username": "{account["username"]}", "account_type": "{account_type}"}}'
