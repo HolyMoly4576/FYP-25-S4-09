@@ -176,39 +176,68 @@ export async function getFileInfo(fileId) {
   return result;
 }
 
-// ---------- File search ----------
-export async function searchFiles(query) {
-  const params = new URLSearchParams({ q: query });
-  const response = await authFetch(
-    `${API_BASE_URL}/files/search?${params.toString()}`,
-    { method: "GET" }
-  );
-
-  const result = await response.json();
-  if (!response.ok) {
-    throw new Error(result.detail || result.message || "Failed to search files");
-  }
-
-  // Backend returns { files: [...], total: number }
-  return result.files || [];
-}
-
-// ---------- Folders ----------
-export async function createFolder({ name, parentFolderId = null }) {
+// ---------- Search: files + folders ----------
+export async function searchFilesAndFolders(query) {
   const token = getAccessToken();
   if (!token) {
     throw new Error("Not authenticated");
   }
 
+  const params = new URLSearchParams({ q: query });
+
+  const response = await fetch(
+    `${API_BASE_URL}/search/files-and-folders?${params.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result.detail || result.message || "Failed to search files and folders"
+    );
+  }
+
+  // result has: { files: [...], folders: [...], total_files, total_folders, total }
+  return result;
+}
+
+// ---------- Move file ----------
+export async function moveFile({ fileId, newFolderId }) {
+  const response = await authFetch(
+    `${API_BASE_URL}/folders/files/${fileId}/move`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        new_folder_id: newFolderId || null, // null = move to root
+      }),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      result.detail || result.message || "Failed to move file"
+    );
+  }
+
+  // backend returns FileResponse
+  return result;
+}
+
+// ---------- Folders ----------
+export async function createFolder({ name, parentFolderId = null }) {
   const response = await authFetch(`${API_BASE_URL}/folders`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
     body: JSON.stringify({
       name,
-      parent_folder_id: parentFolderId, // backend expects this field name
+      parent_folder_id: parentFolderId, // backend field
     }),
   });
 
@@ -217,7 +246,51 @@ export async function createFolder({ name, parentFolderId = null }) {
     throw new Error(result.detail || result.message || "Failed to create folder");
   }
 
-  return result;
+  return result; // FolderResponse
+}
+
+// list folders with optional parent_folder_id
+export async function listFolders(parentFolderId = null) {
+  const params = new URLSearchParams();
+  if (parentFolderId) {
+    params.append("parent_folder_id", parentFolderId);
+  }
+
+  const url =
+    params.toString().length > 0
+      ? `${API_BASE_URL}/folders/list?${params.toString()}`
+      : `${API_BASE_URL}/folders/list`;
+
+  const response = await authFetch(url, { method: "GET" });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to fetch folders");
+  }
+
+  // backend returns { folders: FolderResponse[], total: number }
+  return result.folders || [];
+}
+
+// ---------- Move folder ----------
+export async function moveFolder({ folderId, newParentFolderId }) {
+  const response = await authFetch(
+    `${API_BASE_URL}/folders/${folderId}/move`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        new_parent_folder_id: newParentFolderId || null, // null = root
+      }),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      result.detail || result.message || "Failed to move folder"
+    );
+  }
+  return result; // FolderResponse
 }
 
 // ---------- Storage usage ----------

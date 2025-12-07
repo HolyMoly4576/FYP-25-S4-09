@@ -57,7 +57,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("jwt_algorithm", "JWT_ALGORITHM")
     )
     access_token_expire_minutes: int = Field(
-        default=30,
+        default=60,
         validation_alias=AliasChoices("access_token_expire_minutes", "ACCESS_TOKEN_EXPIRE_MINUTES")
     )
     

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import "../../styles/Users/UserDashboard.css";
-import { createFolder, uploadFile, listFiles, downloadFile, getFileInfo, searchFiles } from "../../services/UserService";
+import { createFolder, listFolders, moveFolder, uploadFile, listFiles, downloadFile, getFileInfo, searchFilesAndFolders, moveFile } from "../../services/UserService";
 
 const UserDashboard = () => {
   const [currentPath, setCurrentPath] = useState("/");
@@ -10,6 +10,10 @@ const UserDashboard = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [erasureLevel, setErasureLevel] = useState("MEDIUM");
   const [files, setFiles] = useState([]);
+  const [folders, setFolders] = useState([]);       
+  const [searchQuery, setSearchQuery] = useState(""); 
+  const [moveTargets, setMoveTargets] = useState({}); // { [fileId]: folderId | "" }
+  const [dragItem, setDragItem] = useState(null); // { type: 'file' | 'folder', id: string }
 
   const [openMenuFileId, setOpenMenuFileId] = useState(null);
 
@@ -18,6 +22,86 @@ const UserDashboard = () => {
   };
 
   const closeMenu = () => setOpenMenuFileId(null);
+
+  // Load root folders and files on mount
+  useEffect(() => {
+    const loadInitial = async () => {
+      try {
+        const [foldersData, filesData] = await Promise.all([
+          listFolders(null), // root folders
+          listFiles(),
+        ]);
+        setFolders(foldersData);
+        setFiles(filesData);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadInitial();
+  }, []);
+
+  // Helper: reload folders for current folder
+  const refreshFolders = async (folderId) => {
+    try {
+      const data = await listFolders(folderId || null);
+      setFolders(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCreateFolderConfirm = async () => {
+    const trimmed = newFolderName.trim();
+    if (!trimmed) {
+      alert("Folder name cannot be empty");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await createFolder({
+        name: trimmed,
+        parentFolderId: currentFolderId,
+      });
+
+      // reload folders for current folder
+      await refreshFolders(currentFolderId);
+
+      setIsCreatingFolder(false);
+      setNewFolderName("");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to create folder");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Navigation
+  const enterFolder = async (folder) => {
+    const newFolderId = folder.folder_id;
+    setCurrentFolderId(newFolderId);
+    setCurrentPath((prev) =>
+      prev === "/" ? `/${folder.name}` : `${prev}/${folder.name}`
+    );
+    await refreshFolders(newFolderId);
+    // later: also filter/load files by folder if backend supports it
+  };
+
+  const goUpOneLevel = async () => {
+    if (currentFolderId === null) return;
+
+    const currentFolder = folders.find((f) => f.folder_id === currentFolderId);
+    const parentId = currentFolder?.parent_folder_id || null;
+
+    setCurrentFolderId(parentId);
+
+    const parts = currentPath.split("/").filter(Boolean);
+    parts.pop();
+    setCurrentPath(parts.length ? `/${parts.join("/")}` : "/");
+
+    await refreshFolders(parentId);
+  };
 
   // Load files when dashboard mounts
   useEffect(() => {
@@ -48,42 +132,6 @@ const UserDashboard = () => {
   const decimals = size < 10 && unitIndex > 0 ? 2 : size < 100 ? 1 : 0;
   return `${size.toFixed(decimals)} ${units[unitIndex]}`;
 }
-
-  const handleCreateFolderClick = () => {
-    setIsCreatingFolder(true);
-  };
-
-  const handleCreateFolderCancel = () => {
-    setIsCreatingFolder(false);
-    setNewFolderName("");
-  };
-
-  const handleCreateFolderConfirm = async () => {
-    const trimmed = newFolderName.trim();
-    if (!trimmed) {
-      alert("Folder name cannot be empty");
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const folder = await createFolder({
-        name: trimmed,
-        parentFolderId: currentFolderId,
-      });
-
-      console.log("Created folder:", folder);
-      // TODO: refresh folder list here when you implement listing
-
-      setIsCreatingFolder(false);
-      setNewFolderName("");
-    } catch (err) {
-      console.error(err);
-      alert(err.message || "Failed to create folder");
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const fileInputRef = useRef(null); 
 
@@ -150,22 +198,77 @@ const UserDashboard = () => {
     setFileInfoData(null);
   };
 
-// Search state
-const [searchQuery, setSearchQuery] = useState("");
-const handleSearchChange = (e) => {
-  setSearchQuery(e.target.value);
-};
-
-const handleSearchSubmit = async (e) => {
-  e.preventDefault();
-  try {
-    const data = await searchFiles(searchQuery.trim());
-    setFiles(data);
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Failed to search files");
+  // Search state
+  async function handleSearchSubmit(e) {
+    e.preventDefault();
+    try {
+      const result = await searchFilesAndFolders(searchQuery);
+      setFiles(result.files || []);
+      setFolders(result.folders || []);
+    } catch (err) {
+      console.error(err);
+      alert(err.message);
+    }
   }
-};
+
+  function handleSearchChange(e) {
+    setSearchQuery(e.target.value);
+  }
+
+  function handleCreateFolderCancel() {
+    setIsCreatingFolder(false);
+    setNewFolderName("");
+  }
+
+  // Derive visible files – currently not folder-aware; adjust when backend adds folder_id on files
+  const visibleFolders = folders; // backend already filters by parent_folder_id
+  const visibleFiles = files;     // TODO: filter by folder when supported
+
+  function handleMoveTargetChange(fileId, folderId) {
+    setMoveTargets((prev) => ({
+      ...prev,
+      [fileId]: folderId,
+    }));
+  }
+
+  async function handleMoveFile(file) {
+    const targetFolderId = moveTargets[file.file_id] || null;
+    if (!targetFolderId) {
+      alert("Please select a folder first");
+      return;
+    }
+
+    try {
+      await moveFile({ fileId: file.file_id, newFolderId: targetFolderId });
+      // refresh current view: folders and files
+      await refreshFolders(currentFolderId);
+      const updatedFiles = await listFiles();
+      setFiles(updatedFiles);
+      alert("File moved successfully");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to move file");
+    }
+  }
+
+  async function handleMoveFolder(folder) {
+    const targetFolderId = moveTargets[folder.folder_id] || null;
+    if (targetFolderId === folder.folder_id) {
+      alert("Cannot move a folder into itself");
+      return;
+    }
+    try {
+      await moveFolder({
+        folderId: folder.folder_id,
+        newParentFolderId: targetFolderId,
+      });
+      await refreshFolders(currentFolderId);
+      alert("Folder moved successfully");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to move folder");
+    }
+  }
 
   return (
     <div className="dashboard-container">
@@ -196,7 +299,14 @@ const handleSearchSubmit = async (e) => {
         <div className="toolbar-right">
           <button
             className="toolbar-action-btn"
-            onClick={handleCreateFolderClick}
+            onClick={goUpOneLevel}
+            disabled={isLoading || currentFolderId === null}
+          >
+            ↑ Up
+          </button>
+          <button
+            className="toolbar-action-btn"
+            onClick={() => setIsCreatingFolder(true)}
             disabled={isLoading}
           >
             + Create Folder
@@ -206,7 +316,7 @@ const handleSearchSubmit = async (e) => {
             ref={fileInputRef}
             style={{ display: "none" }}
             onChange={handleFileChange}
-            multiple 
+            multiple
           />
           {/* Erasure level selector */}
           <select
@@ -262,100 +372,259 @@ const handleSearchSubmit = async (e) => {
         <table className="dashboard-table">
           <thead>
             <tr>
-              <th>File / Folder Name</th>
+              <th>Name</th>
               <th>Size</th>
               <th>Modified Date</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {files.length === 0 ? (
+            {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ textAlign: "center" }}>
-                  No files found
+                  No items found
                 </td>
               </tr>
             ) : (
-              files.map((file) => (
-                <tr key={file.file_id}>
-                  <td>{file.file_name}</td>
-                  <td>{formatFileSize(file.file_size)}</td>
-                  <td>{new Date(file.uploaded_at).toLocaleString()}</td>
-                  <td className="table-actions-cell">
-                    <div className="actions-menu-wrapper">
-                      <button
-                        type="button"
-                        className="table-action-trigger"
-                        onClick={() => toggleMenu(file.file_id)}
-                      >
-                        ⋮
-                      </button>
+              <>
+                {/* Folders */}
+                {visibleFolders.map((folder) => (
+                  <tr
+                    key={folder.folder_id}
+                    className="folder-row"
+                    draggable
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      setDragItem({ type: "folder", id: folder.folder_id });
+                    }}
+                    onDragEnd={() => setDragItem(null)}
+                    onDragOver={(e) => {
+                      // allow dropping other items on this folder
+                      e.preventDefault();
+                    }}
+                    onDrop={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!dragItem) return;
 
-                      {openMenuFileId === file.file_id && (
-                        <div className="actions-menu-dropdown">
+                      try {
+                        if (dragItem.type === "file") {
+                          await moveFile({
+                            fileId: dragItem.id,
+                            newFolderId: folder.folder_id,
+                          });
+                          const updatedFiles = await listFiles();
+                          setFiles(updatedFiles);
+                        } else if (dragItem.type === "folder") {
+                          await moveFolder({
+                            folderId: dragItem.id,
+                            newParentFolderId: folder.folder_id,
+                          });
+                          await refreshFolders(currentFolderId);
+                        }
+                      } catch (err) {
+                        console.error(err);
+                        alert(err.message || "Failed to move item");
+                      } finally {
+                        setDragItem(null);
+                      }
+                    }}
+                    onClick={() => enterFolder(folder)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>📁 {folder.name}</td>
+                    <td>Folder</td>
+                    <td>{new Date(folder.created_at).toLocaleString()}</td>
+                    <td
+                      className="table-actions-cell"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="actions-menu-wrapper">
+                        <button
+                          type="button"
+                          className="table-action-trigger"
+                          onClick={() => toggleMenu(folder.folder_id)}
+                        >
+                          ⋮
+                        </button>
+
+                        {openMenuFileId === folder.folder_id && (
+                          <div className="actions-menu-dropdown">
+                            <button
+                              type="button"
+                              className="actions-menu-item"
+                              onClick={() => {
+                                closeMenu();
+                                alert("Folder delete not implemented yet");
+                              }}
+                            >
+                              Delete
+                            </button>
+
+                            <div className="actions-menu-item">
+                              <select
+                                className="search-input"
+                                value={moveTargets[folder.folder_id] || ""}
+                                onChange={(e) =>
+                                  handleMoveTargetChange(
+                                    folder.folder_id,
+                                    e.target.value
+                                  )
+                                }
+                              >
+                                <option value="">Move to folder…</option>
+                                {folders
+                                  .filter(
+                                    (f) => f.folder_id !== folder.folder_id
+                                  )
+                                  .map((f) => (
+                                    <option
+                                      key={f.folder_id}
+                                      value={f.folder_id}
+                                    >
+                                      {f.name}
+                                    </option>
+                                  ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="table-action-trigger"
+                                style={{ marginLeft: 4 }}
+                                onClick={() => {
+                                  closeMenu();
+                                  handleMoveFolder(folder);
+                                }}
+                              >
+                                Move
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Files */}
+                {visibleFiles.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} style={{ textAlign: "center" }}>
+                      No files found
+                    </td>
+                  </tr>
+                ) : (
+                  visibleFiles.map((file) => (
+                    <tr
+                      key={file.file_id}
+                      draggable
+                      onDragStart={() =>
+                        setDragItem({ type: "file", id: file.file_id })
+                      }
+                      onDragEnd={() => setDragItem(null)}
+                    >
+                      <td>{file.file_name}</td>
+                      <td>{formatFileSize(file.file_size)}</td>
+                      <td>{new Date(file.uploaded_at).toLocaleString()}</td>
+                      <td className="table-actions-cell">
+                        <div className="actions-menu-wrapper">
                           <button
                             type="button"
-                            className="actions-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              handleDownload(file);
-                            }}
+                            className="table-action-trigger"
+                            onClick={() => toggleMenu(file.file_id)}
                           >
-                            Download
+                            ⋮
                           </button>
-                          <button
-                            type="button"
-                            className="actions-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              // TODO: implement delete
-                              alert("Delete not implemented yet");
-                            }}
-                          >
-                            Delete
-                          </button>
-                          <button
-                            type="button"
-                            className="actions-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              // TODO: implement share
-                              alert("Move not implemented yet");
-                            }}
-                          >
-                            Move
-                          </button>
-                          <button
-                            type="button"
-                            className="actions-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              // TODO: implement share
-                              alert("Share not implemented yet");
-                            }}
-                          >
-                            Share
-                          </button>
-                          <button
-                            type="button"
-                            className="actions-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              openFileInfo(file);
-                            }}
-                          >
-                            File Info
-                          </button>
+
+                          {openMenuFileId === file.file_id && (
+                            <div className="actions-menu-dropdown">
+                              <button
+                                type="button"
+                                className="actions-menu-item"
+                                onClick={() => {
+                                  closeMenu();
+                                  handleDownload(file);
+                                }}
+                              >
+                                Download
+                              </button>
+                              <button
+                                type="button"
+                                className="actions-menu-item"
+                                onClick={() => {
+                                  closeMenu();
+                                  alert("Delete not implemented yet");
+                                }}
+                              >
+                                Delete
+                              </button>
+
+                              <div className="actions-menu-item">
+                                <select
+                                  className="search-input"
+                                  value={moveTargets[file.file_id] || ""}
+                                  onChange={(e) =>
+                                    handleMoveTargetChange(
+                                      file.file_id,
+                                      e.target.value
+                                    )
+                                  }
+                                >
+                                  <option value="">Select folder</option>
+                                  {folders.map((folder) => (
+                                    <option
+                                      key={folder.folder_id}
+                                      value={folder.folder_id}
+                                    >
+                                      {folder.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="table-action-trigger"
+                                  style={{ marginLeft: 4 }}
+                                  onClick={() => {
+                                    closeMenu();
+                                    handleMoveFile(file);
+                                  }}
+                                >
+                                  Move
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                className="actions-menu-item"
+                                onClick={() => {
+                                  closeMenu();
+                                  alert("Share not implemented yet");
+                                }}
+                              >
+                                Share
+                              </button>
+                              <button
+                                type="button"
+                                className="actions-menu-item"
+                                onClick={() => {
+                                  closeMenu();
+                                  openFileInfo(file);
+                                }}
+                              >
+                                File Info
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </>
             )}
           </tbody>
         </table>
       </div>
+
   {fileInfoModalOpen && fileInfoData && (
     <div className="modal-backdrop" onClick={closeFileInfo}>
       <div
@@ -377,7 +646,7 @@ const handleSearchSubmit = async (e) => {
         </div>
       </div>
     </div>
-  )}
+      )}
     </div>
   );
 };
