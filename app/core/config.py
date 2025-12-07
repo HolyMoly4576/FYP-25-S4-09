@@ -29,11 +29,43 @@ except Exception as e:
     pass
 
 class Settings(BaseSettings):
-    database_url: str = Field(validation_alias=AliasChoices("database_url", "DATABASE_URL"))
-    test_database_url: str = Field(validation_alias=AliasChoices("test_database_url", "TEST_DATABASE_URL"))
-    jwt_secret_key: str = "testsecret"
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = Field(default=30, validation_alias=AliasChoices("access_token_expire_minutes", "ACCESS_TOKEN_EXPIRE_MINUTES"))
+    # Master Node Configuration (Primary database interface)
+    master_node_url: str = Field(
+        default="http://master_node:3000",
+        validation_alias=AliasChoices("master_node_url", "MASTER_NODE_URL")
+    )
+    
+    # Test Database URL (only for testing, bypasses master node)
+    test_database_url: str = Field(
+        default="postgresql+psycopg2://test_user:test_password@test_postgres_db:5432/test_fyp",
+        validation_alias=AliasChoices("test_database_url", "TEST_DATABASE_URL")
+    )
+    
+    # Legacy database_url field for backward compatibility (required by some parts of the code)
+    database_url: str = Field(
+        default="postgresql+psycopg2://test_user:test_password@test_postgres_db:5432/test_fyp",
+        validation_alias=AliasChoices("database_url", "DATABASE_URL", "test_database_url", "TEST_DATABASE_URL")
+    )
+    
+    # JWT Configuration
+    jwt_secret_key: str = Field(
+        default="your-secret-key-here-change-in-production-very-long-and-secure",
+        validation_alias=AliasChoices("jwt_secret_key", "JWT_SECRET_KEY")
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        validation_alias=AliasChoices("jwt_algorithm", "JWT_ALGORITHM")
+    )
+    access_token_expire_minutes: int = Field(
+        default=30,
+        validation_alias=AliasChoices("access_token_expire_minutes", "ACCESS_TOKEN_EXPIRE_MINUTES")
+    )
+    
+    # Environment
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("environment", "ENVIRONMENT")
+    )
 
     model_config = ConfigDict(
         env_file=str(ENV_FILE),
