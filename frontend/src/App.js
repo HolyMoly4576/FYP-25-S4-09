@@ -5,6 +5,8 @@ import ContactUs from "./pages/ContactUs";
 import LoginForm from "./components/LoginForm";
 import RegisterForm from "./components/RegisterForm";
 import Layout from "./components/Layout";
+import UserLayout from "./components/Users/UserLayout";
+import UserDashboard from "./pages/Users/UserDashboard";
 
 function App() {
   const [showLogin, setShowLogin] = useState(false);
@@ -15,27 +17,45 @@ function App() {
 
   // Optional: callback when registration succeeds
   const handleRegisterSuccess = (userData) => {
-    // Show login popup or do other actions here
     setShowRegister(false);
     setShowLogin(true);
   };
 
   return (
     <Router>
-      <Layout toggleLogin={toggleLogin}>
-        <Routes>
-          <Route path="/" element={<HomePage toggleLogin={toggleLogin} toggleRegister={toggleRegister}/>} />
-          <Route path="/contact-us" element={<ContactUs />} />
-          {/* other routes */}
-        </Routes>
-        {showLogin && <LoginForm toggle={toggleLogin} />}
-        {showRegister && (
-          <RegisterForm
-            onClose={toggleRegister}
-            onRegisterSuccess={handleRegisterSuccess}
+      <Routes>
+        {/* PUBLIC PAGES use Layout (with public navbar) */}
+        <Route element={<Layout toggleLogin={toggleLogin} />}>
+          <Route
+            path="/"
+            element={
+              <HomePage
+                toggleLogin={toggleLogin}
+                toggleRegister={toggleRegister}
+              />
+            }
           />
-        )}
-      </Layout>
+          <Route path="/contact-us" element={<ContactUs />} />
+        </Route>
+
+        {/* REGISTERED USERS PAGES use UserLayout (with UsersNavBar only) */}
+        <Route path="/user-dashboard" element={<UserLayout />}>
+          <Route index element={<UserDashboard />} />
+          {/* Future:
+          <Route path="files" element={<UserDashboard />} />
+          <Route path="shared" element={<SharedPage />} />
+          <Route path="activity" element={<ActivityPage />} /> */}
+        </Route>
+      </Routes>
+
+      {/* Global modals */}
+      {showLogin && <LoginForm toggle={toggleLogin} />}
+      {showRegister && (
+        <RegisterForm
+          onClose={toggleRegister}
+          onRegisterSuccess={handleRegisterSuccess}
+        />
+      )}
     </Router>
   );
 }

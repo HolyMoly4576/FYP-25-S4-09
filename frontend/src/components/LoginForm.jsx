@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginUser } from "../services/authService";
+import { setAccessToken, setCurrentUser } from "../services/UserService";
 import "../styles/LoginForm.css";
 
 function isEmail(str) {
@@ -48,9 +49,23 @@ function LoginForm({ toggle }) {
         password,
         selected_role: selectedRole, // Optional - for UI purposes, backend auto-determines
       });
-      localStorage.setItem("username", identifier);
-      // Use account_type from response (actual account type: FREE, PAID, or SYSADMIN)
+
+      // response matches TokenResponse from backend:
+      // { access_token, token_type, account_id, username, account_type }
+      const token = response.access_token;
       const accountType = response.account_type;
+      const user = {
+        account_id: response.account_id,
+        username: response.username,
+        account_type: response.account_type,
+      };
+
+      // Store token and user for later API calls/dashboard
+      setAccessToken(token);
+      setCurrentUser(user);
+
+      // Optional: keep your existing values
+      localStorage.setItem("username", response.username);
       localStorage.setItem("role", accountType);
       setShowSuccessAlert(true);
       setTimeout(() => {
@@ -60,8 +75,9 @@ function LoginForm({ toggle }) {
           navigate("/Admin/Admin-Dashboard");
         } else {
           // FREE and PAID both go to user dashboard
-          navigate("/User/User-Dashboard");
+          navigate("/user-dashboard");
         }
+        
         toggle && toggle();
       }, 1200);
     } catch (err) {
