@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import "../../styles/Users/UserDashboard.css";
-import { createFolder, uploadFile, listFiles, downloadFile } from "../../services/UserService";
+import { createFolder, uploadFile, listFiles, downloadFile, getFileInfo, searchFiles } from "../../services/UserService";
 
 const UserDashboard = () => {
   const [currentPath, setCurrentPath] = useState("/");
@@ -130,6 +130,43 @@ const UserDashboard = () => {
     }
   };
 
+  // File Info modal state
+  const [fileInfoModalOpen, setFileInfoModalOpen] = useState(false);
+  const [fileInfoData, setFileInfoData] = useState(null);
+
+  const openFileInfo = async (file) => {
+    try {
+      const info = await getFileInfo(file.file_id);
+      setFileInfoData(info);
+      setFileInfoModalOpen(true);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to load file info");
+    }
+  };
+
+  const closeFileInfo = () => {
+    setFileInfoModalOpen(false);
+    setFileInfoData(null);
+  };
+
+// Search state
+const [searchQuery, setSearchQuery] = useState("");
+const handleSearchChange = (e) => {
+  setSearchQuery(e.target.value);
+};
+
+const handleSearchSubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const data = await searchFiles(searchQuery.trim());
+    setFiles(data);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Failed to search files");
+  }
+};
+
   return (
     <div className="dashboard-container">
       {/* Top controls: current folder + search + actions */}
@@ -145,11 +182,15 @@ const UserDashboard = () => {
         </div>
 
         <div className="toolbar-center">
-          <input
-            className="search-input"
-            type="text"
-            placeholder="Search"
-          />
+          <form onSubmit={handleSearchSubmit}>
+            <input
+              className="search-input"
+              type="text"
+              placeholder="Search files by name"
+              value={searchQuery}
+              onChange={handleSearchChange}
+            />
+          </form>
         </div>
 
         <div className="toolbar-right">
@@ -279,6 +320,17 @@ const UserDashboard = () => {
                             onClick={() => {
                               closeMenu();
                               // TODO: implement share
+                              alert("Move not implemented yet");
+                            }}
+                          >
+                            Move
+                          </button>
+                          <button
+                            type="button"
+                            className="actions-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              // TODO: implement share
                               alert("Share not implemented yet");
                             }}
                           >
@@ -289,8 +341,7 @@ const UserDashboard = () => {
                             className="actions-menu-item"
                             onClick={() => {
                               closeMenu();
-                              // TODO: implement file info
-                              alert("File Info not implemented yet");
+                              openFileInfo(file);
                             }}
                           >
                             File Info
@@ -305,6 +356,28 @@ const UserDashboard = () => {
           </tbody>
         </table>
       </div>
+  {fileInfoModalOpen && fileInfoData && (
+    <div className="modal-backdrop" onClick={closeFileInfo}>
+      <div
+        className="modal-content"
+        onClick={(e) => e.stopPropagation()} // prevent close when clicking inside
+      >
+        <h3 className="modal-title">File Info</h3>
+        <div className="modal-body">
+          <p><strong>Name:</strong> {fileInfoData.file_name}</p>
+          <p><strong>Size:</strong> {formatFileSize(fileInfoData.file_size)}</p>
+          <p><strong>Uploaded:</strong> {new Date(fileInfoData.uploaded_at).toLocaleString()}</p>
+          <p><strong>Erasure Profile:</strong> {fileInfoData.erasure_id}</p>
+          <p><strong>Logical Path:</strong> {fileInfoData.logical_path}</p>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="toolbar-action-btn" onClick={closeFileInfo}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
     </div>
   );
 };

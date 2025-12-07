@@ -161,6 +161,38 @@ export async function downloadFile(fileId, fileName) {
   window.URL.revokeObjectURL(url);
 }
 
+// ---------- File info ----------
+export async function getFileInfo(fileId) {
+  const response = await authFetch(`${API_BASE_URL}/files/info/${fileId}`, {
+    method: "GET",
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to get file info");
+  }
+
+  // Backend returns a single FileInfo object
+  return result;
+}
+
+// ---------- File search ----------
+export async function searchFiles(query) {
+  const params = new URLSearchParams({ q: query });
+  const response = await authFetch(
+    `${API_BASE_URL}/files/search?${params.toString()}`,
+    { method: "GET" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to search files");
+  }
+
+  // Backend returns { files: [...], total: number }
+  return result.files || [];
+}
+
 // ---------- Folders ----------
 export async function createFolder({ name, parentFolderId = null }) {
   const token = getAccessToken();

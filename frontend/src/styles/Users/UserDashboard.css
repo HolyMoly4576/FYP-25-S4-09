@@ -77,7 +77,7 @@
 
 /* Table */
 .dashboard-table-wrapper {
-  max-height: 520px;      /* or whatever fits your layout */
+  max-height: 550px;      /* or whatever fits your layout */
   overflow-y: auto;       /* vertical scrollbar when content is taller */
   overflow-x: auto;       /* optional: scroll horizontally if many columns */
   border: 1px solid #ddd; /* optional: visual boundary */
@@ -173,4 +173,23 @@
 
 .actions-menu-item:hover {
   background-color: #f3f3f3;
+}
+
+.modal-backdrop {
+  position: fixed;              /* key: detach from document flow */
+  inset: 0;                     /* top:0; right:0; bottom:0; left:0; */
+  background-color: rgba(0, 0, 0, 0.4);
+  display: flex;                /* center contents */
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;                /* higher than your header/table */
+}
+
+.modal-content {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 16px 20px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
