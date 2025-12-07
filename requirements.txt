@@ -41,3 +41,4 @@ typing_extensions==4.15.0
 uvicorn==0.38.0
 pytest-anyio
 pytest-asyncio==0.21.0
+reedsolo==1.7.0

@@ -1,6 +1,6 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import "../../styles/Users/UserDashboard.css";
-import { createFolder, uploadFile } from "../../services/UserService"; // adjust path if needed
+import { createFolder, uploadFile, listFiles, downloadFile } from "../../services/UserService";
 
 const UserDashboard = () => {
   const [currentPath, setCurrentPath] = useState("/");
@@ -8,6 +8,46 @@ const UserDashboard = () => {
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [erasureLevel, setErasureLevel] = useState("MEDIUM");
+  const [files, setFiles] = useState([]);
+
+  const [openMenuFileId, setOpenMenuFileId] = useState(null);
+
+  const toggleMenu = (fileId) => {
+    setOpenMenuFileId((prev) => (prev === fileId ? null : fileId));
+  };
+
+  const closeMenu = () => setOpenMenuFileId(null);
+
+  // Load files when dashboard mounts
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await listFiles();
+        setFiles(data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    load();
+  }, []);
+
+  function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return "";
+  if (bytes === 0) return "0 B";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const decimals = size < 10 && unitIndex > 0 ? 2 : size < 100 ? 1 : 0;
+  return `${size.toFixed(decimals)} ${units[unitIndex]}`;
+}
 
   const handleCreateFolderClick = () => {
     setIsCreatingFolder(true);
@@ -54,26 +94,42 @@ const UserDashboard = () => {
   };
 
   const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) return;
 
     setIsLoading(true);
     try {
-      const res = await uploadFile({
-        file,
-        folderId: currentFolderId,
-        erasureId: "MEDIUM", // or allow user to pick
-      });
-      console.log("Uploaded file:", res);
-      // TODO: refresh file list
+      // Upload sequentially; you can parallelize later if needed
+      for (const file of selectedFiles) {
+        // eslint-disable-next-line no-await-in-loop
+        await uploadFile({
+          file,
+          folderId: currentFolderId,
+          erasureId: erasureLevel,
+        });
+      }
+
+      // After all uploads, refresh list once
+      const data = await listFiles();
+      setFiles(data);
     } catch (err) {
       console.error(err);
-      alert(err.message || "Failed to upload file");
+      alert(err.message || "Failed to upload one or more files");
     } finally {
       setIsLoading(false);
-      e.target.value = ""; // reset input so same file can be re-selected
+      e.target.value = ""; // allow selecting same files again
     }
   };
+
+  const handleDownload = async (file) => {
+    try {
+      await downloadFile(file.file_id, file.file_name);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to download file");
+    }
+  };
+
   return (
     <div className="dashboard-container">
       {/* Top controls: current folder + search + actions */}
@@ -109,7 +165,19 @@ const UserDashboard = () => {
             ref={fileInputRef}
             style={{ display: "none" }}
             onChange={handleFileChange}
+            multiple 
           />
+          {/* Erasure level selector */}
+          <select
+            className="toolbar-select"
+            value={erasureLevel}
+            onChange={(e) => setErasureLevel(e.target.value)}
+            disabled={isLoading}
+          >
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
           <button
             className="toolbar-action-btn"
             onClick={handleUploadClick}
@@ -160,14 +228,80 @@ const UserDashboard = () => {
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>Example_File.txt</td>
-              <td>100 KB</td>
-              <td>29/10/2025 09:05:05</td>
-              <td className="table-actions-cell">
-                <button className="table-action-trigger">⋮</button>
-              </td>
-            </tr>
+            {files.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ textAlign: "center" }}>
+                  No files found
+                </td>
+              </tr>
+            ) : (
+              files.map((file) => (
+                <tr key={file.file_id}>
+                  <td>{file.file_name}</td>
+                  <td>{formatFileSize(file.file_size)}</td>
+                  <td>{new Date(file.uploaded_at).toLocaleString()}</td>
+                  <td className="table-actions-cell">
+                    <div className="actions-menu-wrapper">
+                      <button
+                        type="button"
+                        className="table-action-trigger"
+                        onClick={() => toggleMenu(file.file_id)}
+                      >
+                        ⋮
+                      </button>
+
+                      {openMenuFileId === file.file_id && (
+                        <div className="actions-menu-dropdown">
+                          <button
+                            type="button"
+                            className="actions-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              handleDownload(file);
+                            }}
+                          >
+                            Download
+                          </button>
+                          <button
+                            type="button"
+                            className="actions-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              // TODO: implement delete
+                              alert("Delete not implemented yet");
+                            }}
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            className="actions-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              // TODO: implement share
+                              alert("Share not implemented yet");
+                            }}
+                          >
+                            Share
+                          </button>
+                          <button
+                            type="button"
+                            className="actions-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              // TODO: implement file info
+                              alert("File Info not implemented yet");
+                            }}
+                          >
+                            File Info
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

@@ -38,21 +38,44 @@ export function clearAuth() {
   localStorage.removeItem(USER_KEY);
 }
 
-// ---------- File upload ----------
-export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }) {
+// central logout
+export function logout() {
+  clearAuth();
+  window.location.href = "/"; // or use react-router navigation
+}
+
+// generic request wrapper
+async function authFetch(url, options = {}) {
   const token = getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated");
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {}),
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
-  // convert File -> base64 (no data:... prefix)
+  const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401) {
+    // token invalid or expired -> force logout
+    logout();
+    throw new Error("Session expired. Please log in again.");
+  }
+
+  return response;
+}
+
+// ---------- File upload ----------
+export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }) {
   const toBase64 = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        // reader.result is like "data:<mime>;base64,AAAA..."
         const result = reader.result;
-        const base64 = result.split(",")[1]; // keep only the base64 part
+        const base64 = result.split(",")[1];
         resolve(base64);
       };
       reader.onerror = (err) => reject(err);
@@ -66,15 +89,11 @@ export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }
     data: base64Data,
     content_type: file.type || "application/octet-stream",
     folder_id: folderId,
-    erasure_id: erasureId,
+    erasure_id: erasureId, // this will be LOW/MEDIUM/HIGH from UI
   };
 
-  const response = await fetch(`${API_BASE_URL}/files/upload`, {
+  const response = await authFetch(`${API_BASE_URL}/files/upload`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
     body: JSON.stringify(payload),
   });
 
@@ -82,8 +101,64 @@ export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }
   if (!response.ok) {
     throw new Error(result.detail || result.message || "Failed to upload file");
   }
+  return result;
+}
 
-  return result; // matches FileUploadResponse
+// ---------- File list ----------
+export async function listFiles() {
+  const response = await authFetch(`${API_BASE_URL}/files/list`, {
+    method: "GET",
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to list files");
+  }
+
+  // Backend returns { files: [...] } matching FileListResponse
+  return result.files || [];
+}
+
+// ---------- File download ----------
+export async function downloadFile(fileId, fileName) {
+  const token = getAccessToken();
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  const response = await fetch(`${API_BASE_URL}/files/download/${fileId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Failed to download file");
+  }
+
+  // Response is raw bytes with Content-Disposition header
+  const blob = await response.blob();
+
+  // Try to extract filename from Content-Disposition; fall back to provided name
+  const disposition = response.headers.get("Content-Disposition");
+  let downloadName = fileName || "download";
+  if (disposition) {
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    if (match && match[1]) {
+      downloadName = match[1];
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = downloadName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 // ---------- Folders ----------
@@ -93,7 +168,7 @@ export async function createFolder({ name, parentFolderId = null }) {
     throw new Error("Not authenticated");
   }
 
-  const response = await fetch(`${API_BASE_URL}/folders`, {
+  const response = await authFetch(`${API_BASE_URL}/folders`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -120,7 +195,7 @@ export async function getStorageUsage() {
     throw new Error("Not authenticated");
   }
 
-  const response = await fetch(`${API_BASE_URL}/storage/usage`, {
+  const response = await authFetch(`${API_BASE_URL}/storage/usage`, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
