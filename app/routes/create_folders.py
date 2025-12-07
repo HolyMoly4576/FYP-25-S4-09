@@ -1,20 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
 import uuid
-import json
-from app.master_node_db import MasterNodeDB, get_master_db
+
+from app.db.session import get_db
+from app.models import Account, Folder
 from app.core.security import decode_access_token
+from app.core.activity_logger import log_activity, get_client_ip, get_user_agent
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
+
 class CreateFolderRequest(BaseModel):
     name: str
     parent_folder_id: Optional[uuid.UUID] = None
+
 
 class FolderResponse(BaseModel):
     folder_id: uuid.UUID
@@ -23,137 +28,190 @@ class FolderResponse(BaseModel):
     parent_folder_id: Optional[uuid.UUID] = None
     created_at: str
 
+
+class FoldersListResponse(BaseModel):
+    folders: List[FolderResponse]
+    total: int
+
+
 def get_current_account(
     token=Depends(oauth2_scheme),
-    master_db: MasterNodeDB = Depends(get_master_db)
-) -> dict:
+    db: Session = Depends(get_db)
+) -> Account:
     token_str = token.credentials if hasattr(token, "credentials") else token
     payload = decode_access_token(token_str)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
-    
     account_id = payload.get("sub")
     if not account_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
-    
-    account_result = master_db.select(
-        "SELECT ACCOUNT_ID, USERNAME, EMAIL, ACCOUNT_TYPE, CREATED_AT FROM ACCOUNT WHERE ACCOUNT_ID = $1",
-        [account_id]
-    )
-    
-    if not account_result:
+    account = db.query(Account).filter(Account.account_id == account_id).first()
+    if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    
-    result = account_result[0]
-    account_dict = {}
-    for k, v in result.items():
-        key_lower = k.lower()
-        account_dict[key_lower] = v
-    
-    return account_dict
+    return account
+
 
 @router.post("", response_model=FolderResponse, status_code=status.HTTP_201_CREATED)
 def create_folder(
     body: CreateFolderRequest,
     request: Request,
-    current_account: dict = Depends(get_current_account),
-    master_db: MasterNodeDB = Depends(get_master_db)
+    current_account: Account = Depends(get_current_account),
+    db: Session = Depends(get_db)
 ):
+    # Validate name
     if body.name is None or body.name.strip() == "":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Folder name cannot be empty")
-    
+
+    # Validate parent if provided and ensure ownership
+    if body.parent_folder_id is not None:
+        parent = db.query(Folder).filter(
+            Folder.folder_id == body.parent_folder_id,
+            Folder.account_id == current_account.account_id
+        ).first()
+        if not parent:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent folder not found")
+
+    # Optional: enforce unique name per account+parent
+    existing = db.query(Folder).filter(
+        Folder.account_id == current_account.account_id,
+        Folder.parent_folder_id.is_(body.parent_folder_id) if body.parent_folder_id is None else Folder.parent_folder_id == body.parent_folder_id,
+        Folder.name == body.name
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Folder with same name already exists in this location")
+
+    folder = Folder(
+        name=body.name.strip(),
+        account_id=current_account.account_id,
+        parent_folder_id=body.parent_folder_id
+    )
+    db.add(folder)
+    db.commit()
+    db.refresh(folder)
+
+    # Log folder creation activity
+    log_activity(
+        db=db,
+        account_id=current_account.account_id,
+        action_type="FOLDER_CREATE",
+        resource_type="FOLDER",
+        resource_id=folder.folder_id,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+        details={"folder_name": folder.name, "parent_folder_id": str(folder.parent_folder_id) if folder.parent_folder_id else None}
+    )
+
+    return FolderResponse(
+        folder_id=folder.folder_id,
+        name=folder.name,
+        account_id=folder.account_id,
+        parent_folder_id=folder.parent_folder_id,
+        created_at=folder.created_at.isoformat(),
+    )
+
+
+@router.get("", response_model=FoldersListResponse)
+def get_folders(
+    parent_folder_id: Optional[uuid.UUID] = Query(None, description="Filter by parent folder ID. If None, returns root folders."),
+    current_account: Account = Depends(get_current_account),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all folders for the current authenticated user.
+    Optionally filter by parent_folder_id to get folders in a specific directory.
+    """
     try:
-        if body.parent_folder_id is not None:
-            parent = master_db.select(
-                "SELECT FOLDER_ID FROM FOLDER WHERE FOLDER_ID = $1 AND ACCOUNT_ID = $2",
-                [str(body.parent_folder_id), current_account["account_id"]]
-            )
-            
-            if not parent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent folder not found")
-        
-        if body.parent_folder_id is None:
-            existing = master_db.select(
-                "SELECT FOLDER_ID FROM FOLDER WHERE ACCOUNT_ID = $1 AND PARENT_FOLDER_ID IS NULL AND NAME = $2",
-                [current_account["account_id"], body.name]
-            )
-        else:
-            existing = master_db.select(
-                "SELECT FOLDER_ID FROM FOLDER WHERE ACCOUNT_ID = $1 AND PARENT_FOLDER_ID = $2 AND NAME = $3",
-                [current_account["account_id"], str(body.parent_folder_id), body.name]
-            )
-        
-        if existing:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Folder with same name already exists in this location")
-        
-        folder_id = uuid.uuid4()
-        
-        master_db.execute(
-            """
-            INSERT INTO FOLDER (FOLDER_ID, NAME, ACCOUNT_ID, PARENT_FOLDER_ID, CREATED_AT)
-            VALUES ($1, $2, $3, $4, NOW())
-            """,
-            [str(folder_id), body.name.strip(), current_account["account_id"], 
-             str(body.parent_folder_id) if body.parent_folder_id else None]
+        # Base query - only folders for current user
+        query = db.query(Folder).filter(
+            Folder.account_id == current_account.account_id
         )
         
-        folder_result = master_db.select(
-            "SELECT FOLDER_ID, NAME, ACCOUNT_ID, PARENT_FOLDER_ID, CREATED_AT FROM FOLDER WHERE FOLDER_ID = $1",
-            [str(folder_id)]
+        # Filter by parent folder if provided
+        if parent_folder_id is not None:
+            query = query.filter(Folder.parent_folder_id == parent_folder_id)
+        else:
+            # If parent_folder_id is None, get root folders (where parent_folder_id IS NULL)
+            query = query.filter(Folder.parent_folder_id.is_(None))
+        
+        # Order by name
+        folders = query.order_by(Folder.name).all()
+        
+        folder_responses = [
+            FolderResponse(
+                folder_id=folder.folder_id,
+                name=folder.name,
+                account_id=folder.account_id,
+                parent_folder_id=folder.parent_folder_id,
+                created_at=folder.created_at.isoformat(),
+            )
+            for folder in folders
+        ]
+        
+        return FoldersListResponse(
+            folders=folder_responses,
+            total=len(folder_responses)
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving folders: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve folders"
+        )
+
+
+@router.get("/{folder_name}", response_model=FolderResponse)
+def get_folder(
+    folder_name: str,
+    parent_folder_id: Optional[uuid.UUID] = Query(None, description="Optional parent folder ID to disambiguate when multiple folders have the same name"),
+    current_account: Account = Depends(get_current_account),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a specific folder by name for the current authenticated user.
+    If multiple folders have the same name, use parent_folder_id to specify which one.
+    """
+    try:
+        query = db.query(Folder).filter(
+            Folder.name == folder_name,
+            Folder.account_id == current_account.account_id
         )
         
-        if not folder_result:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve created folder")
-        
-        folder = folder_result[0]
-        
-        try:
-            client_ip = request.client.host if request.client else "unknown"
-            user_agent = request.headers.get("user-agent", "unknown")
-            
-            details = json.dumps({
-                "folder_name": body.name,
-                "parent_folder_id": str(body.parent_folder_id) if body.parent_folder_id else None
-            })
-            
-            master_db.execute(
-                """
-                INSERT INTO ACTIVITY_LOG (ACTIVITY_ID, ACCOUNT_ID, ACTION_TYPE, RESOURCE_TYPE, RESOURCE_ID, IP_ADDRESS, USER_AGENT, DETAILS, CREATED_AT)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                """,
-                [str(uuid.uuid4()), current_account["account_id"], "FOLDER_CREATE", "FOLDER",
-                 str(folder_id), client_ip, user_agent, details]
-            )
-        except Exception as log_error:
-            logger.warning(f"Failed to log folder creation activity: {str(log_error)}")
-        
-        folder_id_val = folder.get("folder_id") or folder.get("FOLDER_ID")
-        name_val = folder.get("name") or folder.get("NAME")
-        account_id_val = folder.get("account_id") or folder.get("ACCOUNT_ID")
-        parent_folder_id_val = folder.get("parent_folder_id") or folder.get("PARENT_FOLDER_ID")
-        created_at_val = folder.get("created_at") or folder.get("CREATED_AT")
-        
-        if hasattr(created_at_val, "isoformat"):
-            created_at_str = created_at_val.isoformat()
+        # If parent_folder_id is provided, filter by it
+        if parent_folder_id is not None:
+            query = query.filter(Folder.parent_folder_id == parent_folder_id)
         else:
-            created_at_str = str(created_at_val)
+            # If not provided, prefer root folders (where parent_folder_id IS NULL)
+            # But if multiple exist, return the first one
+            pass
+        
+        folder = query.first()
+        
+        if not folder:
+            error_msg = f"Folder '{folder_name}' not found"
+            if parent_folder_id:
+                error_msg += f" in parent folder {parent_folder_id}"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_msg
+            )
+        
+        # Check if there are multiple folders with the same name
+        count = query.count()
+        if count > 1 and parent_folder_id is None:
+            logger.warning(f"Multiple folders found with name '{folder_name}'. Returning first match. Consider using parent_folder_id parameter.")
         
         return FolderResponse(
-            folder_id=uuid.UUID(str(folder_id_val)),
-            name=name_val,
-            account_id=uuid.UUID(str(account_id_val)),
-            parent_folder_id=uuid.UUID(str(parent_folder_id_val)) if parent_folder_id_val else None,
-            created_at=created_at_str
+            folder_id=folder.folder_id,
+            name=folder.name,
+            account_id=folder.account_id,
+            parent_folder_id=folder.parent_folder_id,
+            created_at=folder.created_at.isoformat(),
         )
-    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating folder: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Error retrieving folder: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create folder: {str(e)}"
+            detail="Failed to retrieve folder"
         )
-
