@@ -18,10 +18,15 @@ def start_server():
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         print(f"🌐 Starting web server at http://localhost:{PORT}")
         print(f"📁 Serving file interface: simple_file_interface.html")
+        print(f"🔗 File sharing demo: file_sharing_demo.html")
         print(f"🔗 API Backend: http://localhost:8004")
         print(f"\n📝 Default login credentials:")
         print(f"   Username: alice")
         print(f"   Password: password123")
+        print(f"\n🌟 New Features:")
+        print(f"   • File sharing with one-time passwords")
+        print(f"   • Share links with expiration dates")
+        print(f"   • View-only and download permissions")
         print(f"\n🚀 Opening browser...")
         print(f"\nPress Ctrl+C to stop the server")
         

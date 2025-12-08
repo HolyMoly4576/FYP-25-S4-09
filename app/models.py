@@ -119,3 +119,68 @@ class AccountErasure(Base):
 
     account_id = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), primary_key=True)
     erasure_id = Column(String(50), ForeignKey("erasure_profile.erasure_id"), nullable=False)
+
+
+# File Share model
+class FileShare(Base):
+    __tablename__ = "file_shares"
+
+    share_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_id = Column(UUID(as_uuid=True), ForeignKey("file_objects.file_id", ondelete="CASCADE"), nullable=False)
+    shared_by = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    shared_with = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=True)  # None for public links
+    share_token = Column(String(255), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=True)  # One-time password hash
+    permissions = Column(String(20), nullable=False, default="VIEW")  # VIEW, DOWNLOAD
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)  # When password was used
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    is_active = Column(String(10), nullable=False, default="ACTIVE")
+
+    __table_args__ = (
+        CheckConstraint("permissions IN ('VIEW', 'DOWNLOAD')", name="check_share_permissions"),
+        CheckConstraint("is_active IN ('ACTIVE', 'EXPIRED', 'REVOKED')", name="check_share_status"),
+    )
+
+
+# Folder Share model
+class FolderShare(Base):
+    __tablename__ = "folder_shares"
+
+    share_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    folder_id = Column(UUID(as_uuid=True), ForeignKey("folder.folder_id", ondelete="CASCADE"), nullable=False)
+    shared_by = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    shared_with = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=True)  # None for public links
+    share_token = Column(String(255), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=True)  # One-time password hash
+    permissions = Column(String(20), nullable=False, default="VIEW")  # VIEW, DOWNLOAD
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)  # When password was used
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    is_active = Column(String(10), nullable=False, default="ACTIVE")
+
+    __table_args__ = (
+        CheckConstraint("permissions IN ('VIEW', 'DOWNLOAD')", name="check_folder_share_permissions"),
+        CheckConstraint("is_active IN ('ACTIVE', 'EXPIRED', 'REVOKED')", name="check_folder_share_status"),
+    )
+
+
+# Share Access Log model
+class ShareAccessLog(Base):
+    __tablename__ = "share_access_log"
+
+    access_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    share_id = Column(UUID(as_uuid=True), nullable=False)  # Can reference file_shares or folder_shares
+    share_type = Column(String(10), nullable=False)  # FILE or FOLDER
+    accessed_by = Column(UUID(as_uuid=True), ForeignKey("account.account_id"), nullable=True)  # None for anonymous access
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    action = Column(String(50), nullable=False)  # VIEW, DOWNLOAD, PASSWORD_ATTEMPT
+    success = Column(String(10), nullable=False, default="SUCCESS")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("share_type IN ('FILE', 'FOLDER')", name="check_share_type"),
+        CheckConstraint("action IN ('VIEW', 'DOWNLOAD', 'PASSWORD_ATTEMPT')", name="check_access_action"),
+        CheckConstraint("success IN ('SUCCESS', 'FAILED')", name="check_access_success"),
+    )

@@ -276,3 +276,71 @@ CREATE INDEX idx_activity_action ON ACTIVITY_LOG(ACTION_TYPE);
 CREATE INDEX idx_activity_created ON ACTIVITY_LOG(CREATED_AT);
 CREATE INDEX idx_activity_resource ON ACTIVITY_LOG(RESOURCE_TYPE, RESOURCE_ID);
 CREATE INDEX idx_activity_account_date ON ACTIVITY_LOG(ACCOUNT_ID, CREATED_AT);
+
+-- File and Folder Sharing Tables
+-- Description: Adds tables for file/folder sharing with one-time passwords and user sharing
+-- Date: 2025-12-08
+
+-- Create File Shares table
+CREATE TABLE IF NOT EXISTS file_shares (
+    share_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    file_id UUID NOT NULL REFERENCES file_objects(file_id) ON DELETE CASCADE,
+    shared_by UUID NOT NULL REFERENCES account(account_id) ON DELETE CASCADE,
+    shared_with UUID REFERENCES account(account_id) ON DELETE CASCADE, -- NULL for public links
+    share_token VARCHAR(255), -- NULL for direct user shares, NOT NULL for public links
+    password_hash VARCHAR(255), -- One-time password hash
+    permissions VARCHAR(20) NOT NULL DEFAULT 'VIEW' CHECK (permissions IN ('VIEW', 'DOWNLOAD')),
+    expires_at TIMESTAMP WITH TIME ZONE,
+    used_at TIMESTAMP WITH TIME ZONE, -- When password was used
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_active VARCHAR(10) NOT NULL DEFAULT 'ACTIVE' CHECK (is_active IN ('ACTIVE', 'EXPIRED', 'REVOKED'))
+);
+
+-- Create Folder Shares table
+CREATE TABLE IF NOT EXISTS folder_shares (
+    share_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    folder_id UUID NOT NULL REFERENCES folder(folder_id) ON DELETE CASCADE,
+    shared_by UUID NOT NULL REFERENCES account(account_id) ON DELETE CASCADE,
+    shared_with UUID REFERENCES account(account_id) ON DELETE CASCADE, -- NULL for public links
+    share_token VARCHAR(255), -- NULL for direct user shares, NOT NULL for public links
+    password_hash VARCHAR(255), -- One-time password hash
+    permissions VARCHAR(20) NOT NULL DEFAULT 'VIEW' CHECK (permissions IN ('VIEW', 'DOWNLOAD')),
+    expires_at TIMESTAMP WITH TIME ZONE,
+    used_at TIMESTAMP WITH TIME ZONE, -- When password was used
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_active VARCHAR(10) NOT NULL DEFAULT 'ACTIVE' CHECK (is_active IN ('ACTIVE', 'EXPIRED', 'REVOKED'))
+);
+
+-- Create Share Access Log table
+CREATE TABLE IF NOT EXISTS share_access_log (
+    access_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    share_id UUID NOT NULL, -- Can reference file_shares or folder_shares
+    share_type VARCHAR(10) NOT NULL CHECK (share_type IN ('FILE', 'FOLDER')),
+    accessed_by UUID REFERENCES account(account_id), -- NULL for anonymous access
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    action VARCHAR(50) NOT NULL CHECK (action IN ('VIEW', 'DOWNLOAD', 'PASSWORD_ATTEMPT')),
+    success VARCHAR(10) NOT NULL DEFAULT 'SUCCESS' CHECK (success IN ('SUCCESS', 'FAILED')),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for better performance on sharing tables
+CREATE INDEX IF NOT EXISTS idx_file_shares_token ON file_shares(share_token);
+CREATE INDEX IF NOT EXISTS idx_file_shares_shared_by ON file_shares(shared_by);
+CREATE INDEX IF NOT EXISTS idx_file_shares_shared_with ON file_shares(shared_with);
+CREATE INDEX IF NOT EXISTS idx_file_shares_file_id ON file_shares(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_shares_created ON file_shares(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_folder_shares_token ON folder_shares(share_token);
+CREATE INDEX IF NOT EXISTS idx_folder_shares_shared_by ON folder_shares(shared_by);
+CREATE INDEX IF NOT EXISTS idx_folder_shares_shared_with ON folder_shares(shared_with);
+CREATE INDEX IF NOT EXISTS idx_folder_shares_folder_id ON folder_shares(folder_id);
+CREATE INDEX IF NOT EXISTS idx_folder_shares_created ON folder_shares(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_share_access_log_share_id ON share_access_log(share_id);
+CREATE INDEX IF NOT EXISTS idx_share_access_log_accessed_by ON share_access_log(accessed_by);
+CREATE INDEX IF NOT EXISTS idx_share_access_log_created ON share_access_log(created_at);
+
+-- Additional constraint for share_token uniqueness where not null (for public links)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_file_shares_token_unique ON file_shares(share_token) WHERE share_token IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_folder_shares_token_unique ON folder_shares(share_token) WHERE share_token IS NOT NULL;

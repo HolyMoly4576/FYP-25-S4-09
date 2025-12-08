@@ -225,6 +225,79 @@
             margin-bottom: 20px;
             text-align: center;
         }
+
+        /* Share Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: black;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .share-link {
+            background: #f8f9fa;
+            padding: 12px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-family: monospace;
+            word-break: break-all;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -293,6 +366,52 @@
                     <h2>📁 Your Files</h2>
                     <button class="btn" onclick="loadFiles()" style="margin-bottom: 15px;">🔄 Refresh Files</button>
                     <div id="fileList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div id="shareModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeShareModal()">&times;</span>
+            <h2>🔗 Share File</h2>
+            <div id="shareForm">
+                <div class="form-group">
+                    <label for="sharePassword">One-Time Password (Optional):</label>
+                    <input type="password" id="sharePassword" placeholder="Leave empty for no password">
+                </div>
+                
+                <div class="form-group">
+                    <label for="sharePermissions">Permissions:</label>
+                    <select id="sharePermissions">
+                        <option value="VIEW">View Only</option>
+                        <option value="DOWNLOAD">Download</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="shareExpiry">Expires In:</label>
+                    <select id="shareExpiry">
+                        <option value="">Never</option>
+                        <option value="1">1 Hour</option>
+                        <option value="24">24 Hours</option>
+                        <option value="168">1 Week</option>
+                        <option value="720">1 Month</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <button class="btn" onclick="createShare()">Generate Share Link</button>
+                    <button class="btn btn-secondary" onclick="closeShareModal()">Cancel</button>
+                </div>
+                
+                <div id="shareResult" class="hidden">
+                    <div class="form-group">
+                        <label>Share Link:</label>
+                        <div id="shareLink" class="share-link"></div>
+                        <button class="btn" onclick="copyShareLink()">📋 Copy Link</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -510,6 +629,9 @@
                         <button class="btn" onclick="downloadFile('${file.file_id}', '${file.file_name}')">
                             📥 Download
                         </button>
+                        <button class="btn btn-secondary" onclick="openShareModal('${file.file_id}', '${file.file_name}')">
+                            🔗 Share
+                        </button>
                     </div>
                 </div>
             `;
@@ -556,6 +678,95 @@
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Sharing functions
+        let currentShareFileId = null;
+        let currentShareFileName = null;
+
+        function openShareModal(fileId, fileName) {
+            currentShareFileId = fileId;
+            currentShareFileName = fileName;
+            document.getElementById('shareModal').style.display = 'block';
+            document.getElementById('shareResult').classList.add('hidden');
+            // Reset form
+            document.getElementById('sharePassword').value = '';
+            document.getElementById('sharePermissions').value = 'VIEW';
+            document.getElementById('shareExpiry').value = '';
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').style.display = 'none';
+            currentShareFileId = null;
+            currentShareFileName = null;
+        }
+
+        async function createShare() {
+            const password = document.getElementById('sharePassword').value;
+            const permissions = document.getElementById('sharePermissions').value;
+            const expiryHours = document.getElementById('shareExpiry').value;
+            
+            const requestBody = {
+                file_id: currentShareFileId,
+                permissions: permissions,
+                require_password: password ? true : false
+            };
+            
+            if (expiryHours) {
+                requestBody.expires_hours = parseInt(expiryHours);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/shares/files/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    const shareData = await response.json();
+                    let shareUrl = `${window.location.origin}/file_sharing_demo.html?token=${shareData.share_token}`;
+                    
+                    if (shareData.one_time_password) {
+                        shareUrl += `&password=${shareData.one_time_password}`;
+                    }
+                    
+                    document.getElementById('shareLink').textContent = shareUrl;
+                    document.getElementById('shareResult').classList.remove('hidden');
+                } else {
+                    const errorData = await response.json();
+                    alert('Error creating share: ' + (errorData.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+            }
+        }
+
+        function copyShareLink() {
+            const shareLink = document.getElementById('shareLink').textContent;
+            navigator.clipboard.writeText(shareLink).then(() => {
+                alert('Share link copied to clipboard!');
+            }).catch(() => {
+                // Fallback for browsers that don't support clipboard API
+                const textArea = document.createElement('textarea');
+                textArea.value = shareLink;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Share link copied to clipboard!');
+            });
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('shareModal');
+            if (event.target == modal) {
+                closeShareModal();
+            }
         }
     </script>
 </body>
