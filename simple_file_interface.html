@@ -289,6 +289,98 @@
             background: #5a6268;
         }
 
+        .btn[style*="background: #dc3545"]:hover {
+            background: #c82333 !important;
+            transform: translateY(-1px);
+        }
+
+        .btn[style*="background: #28a745"]:hover {
+            background: #218838 !important;
+            transform: translateY(-1px);
+        }
+
+        .folder-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .folder-item:hover {
+            background: #e9ecef;
+        }
+
+        .folder-item.selected {
+            background: #d4edda;
+            border-color: #28a745;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+
+        .breadcrumb-item {
+            color: #4facfe;
+            text-decoration: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .breadcrumb-item:hover {
+            text-decoration: underline;
+        }
+
+        .breadcrumb-separator {
+            margin: 0 10px;
+            color: #6c757d;
+        }
+
+        .breadcrumb-current {
+            color: #495057;
+            font-weight: 600;
+        }
+
+        .folder-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .folder-actions button {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .file-folder-container {
+            margin-top: 20px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .section-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #495057;
+        }
+
         .share-link {
             background: #f8f9fa;
             padding: 12px;
@@ -363,9 +455,36 @@
 
                 <!-- File List Section -->
                 <div class="file-list">
-                    <h2>📁 Your Files</h2>
-                    <button class="btn" onclick="loadFiles()" style="margin-bottom: 15px;">🔄 Refresh Files</button>
-                    <div id="fileList"></div>
+                    <h2>📁 File Manager</h2>
+                    
+                    <!-- Breadcrumb Navigation -->
+                    <div id="breadcrumb" class="breadcrumb">
+                        <span class="breadcrumb-item" onclick="navigateToFolder(null)">🏠 Home</span>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn" onclick="loadCurrentFolder()">🔄 Refresh</button>
+                        <button class="btn btn-secondary" onclick="redirectToRubbishBin()">🗑️ Go to Rubbish Bin</button>
+                        <button class="btn" style="background: #17a2b8; color: white;" onclick="openCreateFolderModal()">📁 New Folder</button>
+                    </div>
+                    
+                    <div class="file-folder-container">
+                        <!-- Folders Section -->
+                        <div id="foldersSection" style="margin-bottom: 30px;">
+                            <div class="section-header">
+                                <span class="section-title">📁 Folders</span>
+                            </div>
+                            <div id="folderList"></div>
+                        </div>
+                        
+                        <!-- Files Section -->
+                        <div id="filesSection">
+                            <div class="section-header">
+                                <span class="section-title">📄 Files</span>
+                            </div>
+                            <div id="fileList"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -417,11 +536,67 @@
         </div>
     </div>
 
+    <!-- Move File Modal -->
+    <div id="moveModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeMoveModal()">&times;</span>
+            <h2>📁 Move File</h2>
+            <div id="moveForm">
+                <div class="form-group">
+                    <label>Moving: <strong id="moveFileName"></strong></label>
+                </div>
+                
+                <div class="form-group">
+                    <label>Create New Folder:</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="newFolderName" placeholder="Enter folder name">
+                        <button class="btn" onclick="createFolder()">Create</button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Select Destination Folder:</label>
+                    <div id="moveFolderList" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 10px; background: white;">
+                        <div class="folder-item" data-folder-id="root">
+                            <span>📁 Root Folder</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-group" style="margin-top: 20px;">
+                    <button class="btn" onclick="moveFile()">Move File</button>
+                    <button class="btn btn-secondary" onclick="closeMoveModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Folder Modal -->
+    <div id="createFolderModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCreateFolderModal()">&times;</span>
+            <h2>📁 Create New Folder</h2>
+            <div id="createFolderForm">
+                <div class="form-group">
+                    <label for="createFolderName">Folder Name:</label>
+                    <input type="text" id="createFolderName" placeholder="Enter folder name">
+                </div>
+                
+                <div class="form-group" style="margin-top: 20px;">
+                    <button class="btn" onclick="createNewFolder()">Create Folder</button>
+                    <button class="btn btn-secondary" onclick="closeCreateFolderModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global variables
         let accessToken = null;
         let currentUser = null;
         let selectedProfile = 'MEDIUM';
+        let currentFolderId = null; // null means root
+        let folderPath = []; // Array to track folder hierarchy
         const API_BASE = 'http://localhost:8004';
 
         // Initialize the page
@@ -507,8 +682,8 @@
                     document.getElementById('userInfo').innerHTML = 
                         `Logged in as: <strong>${currentUser.username}</strong> (${currentUser.account_type})`;
                     
-                    // Load user's files
-                    loadFiles();
+                    // Load current folder content
+                    loadCurrentFolder();
                 } else {
                     statusDiv.innerHTML = `<div class="status error">Login failed: ${data.detail}</div>`;
                 }
@@ -544,6 +719,7 @@
                     filename: file.name,
                     data: base64Data.split(',')[1], // Remove data URL prefix
                     content_type: file.type || 'application/octet-stream',
+                    folder_id: currentFolderId,
                     erasure_id: selectedProfile
                 };
 
@@ -569,7 +745,7 @@
                     setTimeout(() => {
                         progressDiv.classList.add('hidden');
                         dropZone.classList.remove('uploading');
-                        loadFiles(); // Refresh file list
+                        loadCurrentFolder(); // Refresh current folder
                     }, 1500);
                 } else {
                     throw new Error(result.detail || 'Upload failed');
@@ -585,6 +761,66 @@
             }
         }
 
+        async function loadCurrentFolder() {
+            await Promise.all([loadFolders(), loadFiles()]);
+            updateBreadcrumb();
+        }
+
+        async function loadFolders() {
+            const folderListDiv = document.getElementById('folderList');
+            
+            try {
+                folderListDiv.innerHTML = '<div class="status">Loading folders...</div>';
+
+                const response = await fetch(`${API_BASE}/folders/list`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const foldersInCurrentLocation = data.folders.filter(folder => {
+                        const parentId = folder.parent_folder_id;
+                        return (currentFolderId === null && parentId === null) || 
+                               (currentFolderId !== null && parentId === currentFolderId);
+                    });
+                    
+                    if (foldersInCurrentLocation.length > 0) {
+                        folderListDiv.innerHTML = foldersInCurrentLocation.map(folder => createFolderItem(folder)).join('');
+                    } else {
+                        folderListDiv.innerHTML = '<div class="status">No folders in this location</div>';
+                    }
+                } else {
+                    const error = await response.json();
+                    folderListDiv.innerHTML = `<div class="status error">Failed to load folders: ${error.detail}</div>`;
+                }
+            } catch (error) {
+                folderListDiv.innerHTML = `<div class="status error">Network error: ${error.message}</div>`;
+            }
+        }
+
+        function createFolderItem(folder) {
+            const createdDate = new Date(folder.created_at).toLocaleString();
+            
+            return `
+                <div class="folder-item" data-folder-id="${folder.folder_id}" ondblclick="navigateToFolder('${folder.folder_id}', '${folder.name}')">
+                    <div class="file-info">
+                        <div class="file-name">📁 ${folder.name}</div>
+                        <div class="file-meta">
+                            Created: ${createdDate}
+                        </div>
+                    </div>
+                    <div class="folder-actions">
+                        <button class="btn" style="background: #17a2b8; font-size: 12px;" onclick="event.stopPropagation(); navigateToFolder('${folder.folder_id}', '${folder.name}')">
+                            🔍 Open
+                        </button>
+                        <button class="btn" style="background: #dc3545; font-size: 12px;" onclick="event.stopPropagation(); deleteFolder('${folder.folder_id}', '${folder.name}')">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
         async function loadFiles() {
             const fileListDiv = document.getElementById('fileList');
             
@@ -598,10 +834,17 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    if (data.files && data.files.length > 0) {
-                        fileListDiv.innerHTML = data.files.map(file => createFileItem(file)).join('');
+                    // Filter files by current folder
+                    const filesInCurrentLocation = data.files ? data.files.filter(file => {
+                        const fileFolderId = file.folder_id;
+                        return (currentFolderId === null && fileFolderId === null) || 
+                               (currentFolderId !== null && fileFolderId === currentFolderId);
+                    }) : [];
+                    
+                    if (filesInCurrentLocation.length > 0) {
+                        fileListDiv.innerHTML = filesInCurrentLocation.map(file => createFileItem(file)).join('');
                     } else {
-                        fileListDiv.innerHTML = '<div class="status">No files uploaded yet. Upload your first file above!</div>';
+                        fileListDiv.innerHTML = '<div class="status">No files in this location</div>';
                     }
                 } else {
                     fileListDiv.innerHTML = `<div class="status error">Failed to load files: ${data.detail}</div>`;
@@ -616,7 +859,7 @@
             const fileSize = formatFileSize(file.file_size);
             
             return `
-                <div class="file-item">
+                <div class="file-item" data-file-id="${file.file_id}">
                     <div class="file-info">
                         <div class="file-name">📄 ${file.file_name}</div>
                         <div class="file-meta">
@@ -631,6 +874,12 @@
                         </button>
                         <button class="btn btn-secondary" onclick="openShareModal('${file.file_id}', '${file.file_name}')">
                             🔗 Share
+                        </button>
+                        <button class="btn" style="background: #28a745;" onclick="openMoveModal('${file.file_id}', '${file.file_name}')">
+                            📁 Move
+                        </button>
+                        <button class="btn" style="background: #dc3545;" onclick="deleteFile('${file.file_id}', '${file.file_name}')">
+                            🗑️ Delete
                         </button>
                     </div>
                 </div>
@@ -761,11 +1010,415 @@
             });
         }
 
+        // Folder navigation functions
+        function navigateToFolder(folderId, folderName) {
+            if (folderId === null) {
+                // Navigate to root
+                currentFolderId = null;
+                folderPath = [];
+            } else {
+                // Navigate to specific folder
+                currentFolderId = folderId;
+                
+                // Add to path if not already there (avoid duplicates when clicking breadcrumb)
+                const existingIndex = folderPath.findIndex(item => item.id === folderId);
+                if (existingIndex !== -1) {
+                    // Remove everything after this folder in the path
+                    folderPath = folderPath.slice(0, existingIndex + 1);
+                } else {
+                    // Add new folder to path
+                    folderPath.push({ id: folderId, name: folderName });
+                }
+            }
+            
+            loadCurrentFolder();
+        }
+
+        function updateBreadcrumb() {
+            const breadcrumbDiv = document.getElementById('breadcrumb');
+            let breadcrumbHtml = '<span class="breadcrumb-item" onclick="navigateToFolder(null)">🏠 Home</span>';
+            
+            folderPath.forEach((folder, index) => {
+                breadcrumbHtml += '<span class="breadcrumb-separator">/</span>';
+                if (index === folderPath.length - 1) {
+                    breadcrumbHtml += `<span class="breadcrumb-current">📁 ${folder.name}</span>`;
+                } else {
+                    breadcrumbHtml += `<span class="breadcrumb-item" onclick="navigateToFolder('${folder.id}', '${folder.name}')">📁 ${folder.name}</span>`;
+                }
+            });
+            
+            breadcrumbDiv.innerHTML = breadcrumbHtml;
+        }
+
+        // Create folder functions
+        function openCreateFolderModal() {
+            document.getElementById('createFolderModal').style.display = 'block';
+            document.getElementById('createFolderName').value = '';
+        }
+
+        function closeCreateFolderModal() {
+            document.getElementById('createFolderModal').style.display = 'none';
+        }
+
+        async function createNewFolder() {
+            const folderName = document.getElementById('createFolderName').value.trim();
+            
+            if (!folderName) {
+                alert('Please enter a folder name');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/folders`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        name: folderName,
+                        parent_folder_id: currentFolderId
+                    })
+                });
+
+                if (response.ok) {
+                    alert(`Folder "${folderName}" created successfully!`);
+                    closeCreateFolderModal();
+                    loadCurrentFolder();
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to create folder: ${error.detail}`);
+                }
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        }
+
+        async function deleteFolder(folderId, folderName) {
+            if (!confirm(`Are you sure you want to move folder "${folderName}" and all its contents to the rubbish bin? This will delete all files and subfolders inside it.`)) {
+                return;
+            }
+
+            // Find the folder item for optimistic update
+            const folderItem = document.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
+            let originalOpacity = null;
+            let originalPointerEvents = null;
+            
+            try {
+                // Optimistically dim the folder item to show it's being deleted
+                if (folderItem) {
+                    originalOpacity = folderItem.style.opacity;
+                    originalPointerEvents = folderItem.style.pointerEvents;
+                    folderItem.style.opacity = '0.5';
+                    folderItem.style.pointerEvents = 'none';
+                }
+
+                const response = await fetch(`${API_BASE}/bin/delete-folder`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        folder_id: folderId,
+                        deletion_reason: 'USER_DELETE'
+                    })
+                });
+
+                if (response.ok) {
+                    // Success - remove the folder item completely
+                    if (folderItem) {
+                        folderItem.remove();
+                    }
+                    
+                    const result = await response.json();
+                    let message = `"${folderName}" has been moved to the rubbish bin.`;
+                    
+                    if (result.total_items_deleted > 1) {
+                        const filesDeleted = result.files_deleted || 0;
+                        const subfoldersDeleted = result.subfolders_deleted || 0;
+                        const totalSize = result.total_files_size || 0;
+                        
+                        message += ` ${filesDeleted} files`;
+                        if (totalSize > 0) {
+                            message += ` (${formatFileSize(totalSize)})`;
+                        }
+                        message += ` and ${subfoldersDeleted} subfolders were also moved to the bin.`;
+                    }
+                    
+                    showNotification(message, 'success');
+                } else {
+                    // Error - restore the folder item appearance
+                    if (folderItem) {
+                        folderItem.style.opacity = originalOpacity || '1';
+                        folderItem.style.pointerEvents = originalPointerEvents || 'auto';
+                    }
+                    
+                    const error = await response.json();
+                    showNotification(`Failed to delete folder: ${error.detail}`, 'error');
+                }
+            } catch (error) {
+                // Network error - restore the folder item appearance
+                if (folderItem) {
+                    folderItem.style.opacity = originalOpacity || '1';
+                    folderItem.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+                
+                showNotification(`Network error: ${error.message}`, 'error');
+            }
+        }
+
+        // Rubbish bin functions
+        // Utility function to show notifications
+        function showNotification(message, type = 'info') {
+            // For now, use alert - in a production system, you'd use a proper notification system
+            if (type === 'error') {
+                alert(`❌ ${message}`);
+            } else if (type === 'success') {
+                alert(`✅ ${message}`);
+            } else {
+                alert(message);
+            }
+        }
+
+        // Utility function to update file count display
+        function updateFileCount() {
+            const fileItems = document.querySelectorAll('#fileList .file-item');
+            const fileCount = fileItems.length;
+            // Update any file count display if it exists
+            const countElement = document.querySelector('#fileCount');
+            if (countElement) {
+                countElement.textContent = fileCount;
+            }
+        }
+
+        async function deleteFile(fileId, fileName) {
+            if (!confirm(`Are you sure you want to move "${fileName}" to the rubbish bin? You can restore it within 30 days.`)) {
+                return;
+            }
+
+            // Find the file item for optimistic update
+            const fileItem = document.querySelector(`.file-item[data-file-id="${fileId}"]`);
+            let originalOpacity = null;
+            let originalPointerEvents = null;
+            
+            try {
+                // Optimistically dim the file item to show it's being deleted
+                if (fileItem) {
+                    originalOpacity = fileItem.style.opacity;
+                    originalPointerEvents = fileItem.style.pointerEvents;
+                    fileItem.style.opacity = '0.5';
+                    fileItem.style.pointerEvents = 'none';
+                }
+
+                const response = await fetch(`${API_BASE}/bin/delete-file`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        file_id: fileId,
+                        deletion_reason: 'USER_DELETE'
+                    })
+                });
+
+                if (response.ok) {
+                    // Success - remove the file item completely
+                    if (fileItem) {
+                        fileItem.remove();
+                    }
+                    
+                    // Show success message
+                    showNotification(`"${fileName}" has been moved to the rubbish bin. You can restore it within 30 days.`, 'success');
+                    
+                    // Update the file count if displayed
+                    updateFileCount();
+                } else {
+                    // Error - restore the file item appearance
+                    if (fileItem) {
+                        fileItem.style.opacity = originalOpacity || '1';
+                        fileItem.style.pointerEvents = originalPointerEvents || 'auto';
+                    }
+                    
+                    const error = await response.json();
+                    showNotification(`Failed to move file to rubbish bin: ${error.detail}`, 'error');
+                }
+            } catch (error) {
+                // Network error - restore the file item appearance
+                if (fileItem) {
+                    fileItem.style.opacity = originalOpacity || '1';
+                    fileItem.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+                
+                showNotification(`Network error: ${error.message}`, 'error');
+            }
+        }
+
+        function redirectToRubbishBin() {
+            // Redirect to the rubbish bin interface
+            window.location.href = 'recycle_bin_interface.html';
+        }
+
+        // Move file functions
+        let currentMoveFileId = null;
+        let currentMoveFileName = null;
+        let selectedFolderId = 'root';
+
+        async function openMoveModal(fileId, fileName) {
+            currentMoveFileId = fileId;
+            currentMoveFileName = fileName;
+            selectedFolderId = 'root';
+            
+            document.getElementById('moveFileName').textContent = fileName;
+            document.getElementById('moveModal').style.display = 'block';
+            
+            // Load folders for move modal
+            await loadFoldersForMove();
+        }
+
+        async function loadFoldersForMove() {
+            try {
+                const response = await fetch(`${API_BASE}/folders/list`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    displayFolders(data.folders || []);
+                } else {
+                    console.error('Failed to load folders');
+                    displayFolders([]);
+                }
+            } catch (error) {
+                console.error('Error loading folders:', error);
+                displayFolders([]);
+            }
+        }
+
+        function closeMoveModal() {
+            document.getElementById('moveModal').style.display = 'none';
+            currentMoveFileId = null;
+            currentMoveFileName = null;
+            selectedFolderId = 'root';
+            document.getElementById('newFolderName').value = '';
+        }
+
+        function displayFolders(folders) {
+            const folderList = document.getElementById('moveFolderList');
+            let html = `
+                <div class="folder-item ${selectedFolderId === 'root' ? 'selected' : ''}" data-folder-id="root" onclick="selectFolder('root')">
+                    <span>📁 Root Folder</span>
+                </div>
+            `;
+            
+            folders.forEach(folder => {
+                const isSelected = selectedFolderId === folder.folder_id;
+                html += `
+                    <div class="folder-item ${isSelected ? 'selected' : ''}" data-folder-id="${folder.folder_id}" onclick="selectFolder('${folder.folder_id}')">
+                        <span>📁 ${folder.name}</span>
+                    </div>
+                `;
+            });
+            
+            folderList.innerHTML = html;
+        }
+
+        function selectFolder(folderId) {
+            selectedFolderId = folderId;
+            
+            // Update visual selection
+            document.querySelectorAll('.folder-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            document.querySelector(`[data-folder-id="${folderId}"]`).classList.add('selected');
+        }
+
+        async function createFolder() {
+            const folderName = document.getElementById('newFolderName').value.trim();
+            
+            if (!folderName) {
+                alert('Please enter a folder name');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/folders`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        name: folderName,
+                        parent_folder_id: selectedFolderId === 'root' ? null : selectedFolderId
+                    })
+                });
+
+                if (response.ok) {
+                    const newFolder = await response.json();
+                    alert(`Folder "${folderName}" created successfully!`);
+                    document.getElementById('newFolderName').value = '';
+                    
+                    // Reload folders and select the new one
+                    await loadFolders();
+                    selectFolder(newFolder.folder_id);
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to create folder: ${error.detail}`);
+                }
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        }
+
+        async function moveFile() {
+            if (!currentMoveFileId) {
+                alert('No file selected for moving');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/folders/files/${currentMoveFileId}/move`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        new_folder_id: selectedFolderId === 'root' ? null : selectedFolderId
+                    })
+                });
+
+                if (response.ok) {
+                    const destinationName = selectedFolderId === 'root' ? 'Root Folder' : 
+                        document.querySelector(`[data-folder-id="${selectedFolderId}"] span`).textContent.replace('📁 ', '');
+                    
+                    alert(`"${currentMoveFileName}" has been moved to "${destinationName}" successfully!`);
+                    closeMoveModal();
+                    loadCurrentFolder(); // Refresh current folder view
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to move file: ${error.detail}`);
+                }
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        }
+
         // Close modal when clicking outside of it
         window.onclick = function(event) {
-            const modal = document.getElementById('shareModal');
-            if (event.target == modal) {
+            const shareModal = document.getElementById('shareModal');
+            const moveModal = document.getElementById('moveModal');
+            const createFolderModal = document.getElementById('createFolderModal');
+            
+            if (event.target == shareModal) {
                 closeShareModal();
+            } else if (event.target == moveModal) {
+                closeMoveModal();
+            } else if (event.target == createFolderModal) {
+                closeCreateFolderModal();
             }
         }
     </script>

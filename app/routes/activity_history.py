@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, validator
+from typing import Optional, List, Union
 from datetime import datetime, date, timezone
 import logging
 import json
@@ -22,7 +22,15 @@ class ActivityDetail(BaseModel):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     details: Optional[dict] = None
-    created_at: str
+    created_at: Union[str, datetime]
+    
+    @validator('created_at', pre=True)
+    def serialize_datetime(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        elif hasattr(v, 'isoformat'):
+            return v.isoformat()
+        return str(v)
 
 
 class ActivityHistoryResponse(BaseModel):
@@ -89,11 +97,11 @@ def get_activity_history(
                 end_datetime = datetime.combine(filter_date, datetime.max.time()).replace(tzinfo=timezone.utc)
                 
                 sql_conditions.append(f"created_at >= ${param_index}")
-                params.append(start_datetime)
+                params.append(start_datetime.isoformat())  # Convert to ISO string for master node
                 param_index += 1
                 
                 sql_conditions.append(f"created_at <= ${param_index}")
-                params.append(end_datetime)
+                params.append(end_datetime.isoformat())  # Convert to ISO string for master node
                 param_index += 1
                 
             except ValueError:
@@ -128,7 +136,7 @@ def get_activity_history(
         
         activities = master_db.select(activities_sql, params)
         
-        # Convert to response format
+        # Convert to response format with Pydantic validation handling datetime
         activity_list = []
         for activity in activities:
             # Handle details field (might be JSON or dict)
@@ -140,13 +148,7 @@ def get_activity_history(
                 except:
                     details_value = None
             
-            # Format created_at
-            created_at = activity["created_at"]
-            if hasattr(created_at, "isoformat"):
-                created_at_str = created_at.isoformat()
-            else:
-                created_at_str = str(created_at)
-            
+            # Pydantic validator will handle datetime conversion automatically
             activity_list.append(ActivityDetail(
                 activity_id=str(activity["activity_id"]),
                 action_type=activity["action_type"],
@@ -155,7 +157,7 @@ def get_activity_history(
                 ip_address=activity.get("ip_address"),
                 user_agent=activity.get("user_agent"),
                 details=details_value,
-                created_at=created_at_str
+                created_at=activity["created_at"]  # Validator will handle datetime conversion
             ))
         
         return ActivityHistoryResponse(

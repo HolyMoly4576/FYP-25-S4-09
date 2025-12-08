@@ -176,15 +176,23 @@ def list_folders(
     """
     try:
         if parent_folder_id is None:
-            # No query parameter provided - return ALL folders
+            # No query parameter provided - return ALL folders (excluding those in recycle bin)
             folders = master_db.select(
-                "SELECT FOLDER_ID, NAME, ACCOUNT_ID, PARENT_FOLDER_ID, CREATED_AT FROM FOLDER WHERE ACCOUNT_ID = $1 ORDER BY NAME",
+                """SELECT f.FOLDER_ID, f.NAME, f.ACCOUNT_ID, f.PARENT_FOLDER_ID, f.CREATED_AT 
+                   FROM FOLDER f
+                   LEFT JOIN recycle_bin rb ON (f.FOLDER_ID = rb.resource_id AND rb.resource_type = 'FOLDER' AND rb.is_recovered = 'FALSE')
+                   WHERE f.ACCOUNT_ID = $1 AND rb.resource_id IS NULL
+                   ORDER BY f.NAME""",
                 [current_account["account_id"]]
             )
         else:
-            # Specific parent provided - return children of that parent
+            # Specific parent provided - return children of that parent (excluding those in recycle bin)
             folders = master_db.select(
-                "SELECT FOLDER_ID, NAME, ACCOUNT_ID, PARENT_FOLDER_ID, CREATED_AT FROM FOLDER WHERE ACCOUNT_ID = $1 AND PARENT_FOLDER_ID = $2 ORDER BY NAME",
+                """SELECT f.FOLDER_ID, f.NAME, f.ACCOUNT_ID, f.PARENT_FOLDER_ID, f.CREATED_AT 
+                   FROM FOLDER f
+                   LEFT JOIN recycle_bin rb ON (f.FOLDER_ID = rb.resource_id AND rb.resource_type = 'FOLDER' AND rb.is_recovered = 'FALSE')
+                   WHERE f.ACCOUNT_ID = $1 AND f.PARENT_FOLDER_ID = $2 AND rb.resource_id IS NULL
+                   ORDER BY f.NAME""",
                 [current_account["account_id"], str(parent_folder_id)]
             )
         

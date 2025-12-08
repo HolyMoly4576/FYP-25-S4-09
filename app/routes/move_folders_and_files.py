@@ -242,7 +242,7 @@ def move_file(
     """
     try:
         file = master_db.select(
-            "SELECT FILE_ID, FILE_NAME, ACCOUNT_ID, FOLDER_ID, FILE_SIZE, CREATED_AT, UPDATED_AT FROM FILE_OBJECTS WHERE FILE_ID = $1 AND ACCOUNT_ID = $2",
+            "SELECT FILE_ID, FILE_NAME, ACCOUNT_ID, FOLDER_ID, FILE_SIZE, UPLOADED_AT, UPDATED_AT FROM FILE_OBJECTS WHERE FILE_ID = $1 AND ACCOUNT_ID = $2",
             [str(file_id), current_account["account_id"]]
         )
         
@@ -317,7 +317,7 @@ def move_file(
             logger.warning(f"Failed to log file move activity: {str(log_error)}")
         
         updated_file = master_db.select(
-            "SELECT FILE_ID, FILE_NAME, ACCOUNT_ID, FOLDER_ID, FILE_SIZE, CREATED_AT, UPDATED_AT FROM FILE_OBJECTS WHERE FILE_ID = $1",
+            "SELECT FILE_ID, FILE_NAME, ACCOUNT_ID, FOLDER_ID, FILE_SIZE, UPLOADED_AT, UPDATED_AT FROM FILE_OBJECTS WHERE FILE_ID = $1",
             [str(file_id)]
         )
         
@@ -330,7 +330,7 @@ def move_file(
         account_id_val = file.get("account_id") or file.get("ACCOUNT_ID")
         folder_id_val = file.get("folder_id") or file.get("FOLDER_ID")
         file_size_val = file.get("file_size") or file.get("FILE_SIZE")
-        created_at_val = file.get("created_at") or file.get("CREATED_AT")
+        created_at_val = file.get("uploaded_at") or file.get("UPLOADED_AT")
         updated_at_val = file.get("updated_at") or file.get("UPDATED_AT")
         
         if hasattr(created_at_val, "isoformat"):

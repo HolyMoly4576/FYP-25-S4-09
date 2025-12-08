@@ -109,7 +109,10 @@ CREATE TABLE FILE_OBJECTS (
     FILE_SIZE BIGINT NOT NULL,
     UPLOADED_AT TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     LOGICAL_PATH TEXT NOT NULL,
-    FOREIGN KEY (ACCOUNT_ID) REFERENCES ACCOUNT(ACCOUNT_ID)
+    FOLDER_ID uuid,
+    UPDATED_AT TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (ACCOUNT_ID) REFERENCES ACCOUNT(ACCOUNT_ID),
+    FOREIGN KEY (FOLDER_ID) REFERENCES FOLDER(FOLDER_ID) ON DELETE SET NULL
 );
 
 CREATE TABLE FILE_VERSIONS (
@@ -276,6 +279,36 @@ CREATE INDEX idx_activity_action ON ACTIVITY_LOG(ACTION_TYPE);
 CREATE INDEX idx_activity_created ON ACTIVITY_LOG(CREATED_AT);
 CREATE INDEX idx_activity_resource ON ACTIVITY_LOG(RESOURCE_TYPE, RESOURCE_ID);
 CREATE INDEX idx_activity_account_date ON ACTIVITY_LOG(ACCOUNT_ID, CREATED_AT);
+
+-- Recycle Bin Tables
+-- Description: Soft delete system for files and folders with 30-day retention
+-- Date: 2025-12-08
+
+-- Create Recycle Bin table for deleted files and folders
+CREATE TABLE IF NOT EXISTS recycle_bin (
+    bin_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    account_id UUID NOT NULL REFERENCES account(account_id) ON DELETE CASCADE,
+    resource_type VARCHAR(10) NOT NULL CHECK (resource_type IN ('FILE', 'FOLDER')),
+    resource_id UUID NOT NULL, -- References file_objects.file_id or folder.folder_id
+    original_name VARCHAR(255) NOT NULL,
+    original_path TEXT, -- Store the full path for context
+    original_size BIGINT, -- For files only, NULL for folders
+    deleted_by UUID NOT NULL REFERENCES account(account_id) ON DELETE CASCADE,
+    deleted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (CURRENT_TIMESTAMP + INTERVAL '30 days'),
+    deletion_reason VARCHAR(100), -- 'USER_DELETE', 'ADMIN_DELETE', 'AUTO_CLEANUP', etc.
+    bin_metadata JSONB, -- Store additional context like parent folder info, file type, etc.
+    is_recovered BOOLEAN NOT NULL DEFAULT FALSE,
+    recovered_at TIMESTAMP WITH TIME ZONE,
+    recovered_by UUID REFERENCES account(account_id)
+);
+
+-- Create indexes for better performance on bin operations
+CREATE INDEX IF NOT EXISTS idx_recycle_bin_account ON recycle_bin(account_id);
+CREATE INDEX IF NOT EXISTS idx_recycle_bin_deleted_at ON recycle_bin(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_recycle_bin_expires_at ON recycle_bin(expires_at);
+CREATE INDEX IF NOT EXISTS idx_recycle_bin_resource ON recycle_bin(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_recycle_bin_recovered ON recycle_bin(is_recovered);
 
 -- File and Folder Sharing Tables
 -- Description: Adds tables for file/folder sharing with one-time passwords and user sharing

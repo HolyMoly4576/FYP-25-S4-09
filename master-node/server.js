@@ -418,6 +418,21 @@ app.get('/nodes', async (req, res) => {
 });
 
 // Enhanced database query endpoint with better error handling and security
+// Helper function to serialize datetime objects for JSON response
+function serializeRowsForJSON(rows) {
+    return rows.map(row => {
+        const serializedRow = {};
+        for (const [key, value] of Object.entries(row)) {
+            if (value instanceof Date) {
+                serializedRow[key] = value.toISOString();
+            } else {
+                serializedRow[key] = value;
+            }
+        }
+        return serializedRow;
+    });
+}
+
 app.post('/query', async (req, res) => {
     try {
         const { sql, params = [], transaction = false } = req.body;
@@ -476,7 +491,7 @@ app.post('/query', async (req, res) => {
         
         res.json({ 
             success: true, 
-            data: result.rows,
+            data: serializeRowsForJSON(result.rows),
             rowCount: result.rowCount,
             command: result.command 
         });
@@ -702,7 +717,7 @@ app.post('/query/batch', async (req, res) => {
                     batchResults.push({
                         index: i,
                         success: true,
-                        data: result.rows,
+                        data: serializeRowsForJSON(result.rows),
                         rowCount: result.rowCount
                     });
                 }
@@ -720,7 +735,7 @@ app.post('/query/batch', async (req, res) => {
                     results.push({
                         index: i,
                         success: true,
-                        data: result.rows,
+                        data: serializeRowsForJSON(result.rows),
                         rowCount: result.rowCount
                     });
                 } catch (error) {
@@ -744,7 +759,7 @@ app.post('/query/batch', async (req, res) => {
 // File metadata creation endpoint
 app.post('/files', async (req, res) => {
     try {
-        const { account_id, file_name, file_size, logical_path, erasure_id } = req.body;
+        const { account_id, file_name, file_size, logical_path, folder_id, erasure_id } = req.body;
         
         if (!account_id || !file_name || !file_size || !logical_path) {
             return res.status(400).json({ error: 'Missing required fields: account_id, file_name, file_size, logical_path' });
@@ -753,11 +768,11 @@ app.post('/files', async (req, res) => {
         const fileId = uuidv4();
         const versionId = uuidv4();
         
-        // Create FILE_OBJECTS entry
+        // Create FILE_OBJECTS entry with folder_id
         await query(`
-            INSERT INTO FILE_OBJECTS (FILE_ID, ACCOUNT_ID, FILE_NAME, FILE_SIZE, LOGICAL_PATH, UPLOADED_AT)
-            VALUES ($1, $2, $3, $4, $5, NOW())
-        `, [fileId, account_id, file_name, file_size, logical_path]);
+            INSERT INTO FILE_OBJECTS (FILE_ID, ACCOUNT_ID, FILE_NAME, FILE_SIZE, LOGICAL_PATH, FOLDER_ID, UPLOADED_AT)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        `, [fileId, account_id, file_name, file_size, logical_path, folder_id || null]);
         
         // Create FILE_VERSIONS entry - using BYTES instead of FILE_SIZE
         await query(`

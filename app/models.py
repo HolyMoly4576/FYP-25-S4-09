@@ -69,6 +69,7 @@ class FileObject(Base):
     file_size = Column(BigInteger, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     logical_path = Column(Text, nullable=False)
+    folder_id = Column(UUID(as_uuid=True), ForeignKey("folder.folder_id", ondelete="SET NULL"), nullable=True)
 
 
 # Password Reset Token model
@@ -183,4 +184,30 @@ class ShareAccessLog(Base):
         CheckConstraint("share_type IN ('FILE', 'FOLDER')", name="check_share_type"),
         CheckConstraint("action IN ('VIEW', 'DOWNLOAD', 'PASSWORD_ATTEMPT')", name="check_access_action"),
         CheckConstraint("success IN ('SUCCESS', 'FAILED')", name="check_access_success"),
+    )
+
+
+# Recycle Bin model
+class RecycleBin(Base):
+    __tablename__ = "recycle_bin"
+
+    bin_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    resource_type = Column(String(10), nullable=False)  # FILE or FOLDER
+    resource_id = Column(UUID(as_uuid=True), nullable=False)  # Original file_id or folder_id
+    original_name = Column(String(255), nullable=False)
+    original_path = Column(Text, nullable=True)  # Store full path for context
+    original_size = Column(BigInteger, nullable=True)  # For files only
+    deleted_by = Column(UUID(as_uuid=True), ForeignKey("account.account_id", ondelete="CASCADE"), nullable=False)
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)  # Set to deleted_at + 30 days
+    deletion_reason = Column(String(100), nullable=True)  # USER_DELETE, ADMIN_DELETE, etc.
+    bin_metadata = Column(JSONB, nullable=True)  # Additional context (renamed from metadata)
+    is_recovered = Column(String(10), nullable=False, default="FALSE")  # FALSE, TRUE
+    recovered_at = Column(DateTime(timezone=True), nullable=True)
+    recovered_by = Column(UUID(as_uuid=True), ForeignKey("account.account_id"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("resource_type IN ('FILE', 'FOLDER')", name="check_bin_resource_type"),
+        CheckConstraint("is_recovered IN ('FALSE', 'TRUE')", name="check_bin_recovered"),
     )

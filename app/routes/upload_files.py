@@ -50,7 +50,7 @@ class FileInfo(BaseModel):
     file_size: int
     logical_path: str
     uploaded_at: str
-    version_id: Optional[str] = None
+    folder_id: Optional[str] = None
     erasure_id: Optional[str] = None
 
 
@@ -124,6 +124,7 @@ def upload_file(
             "file_name": upload_data.filename,
             "file_size": file_size,
             "logical_path": logical_path,
+            "folder_id": upload_data.folder_id,
             "erasure_id": upload_data.erasure_id
         }
         
@@ -265,4 +266,66 @@ def upload_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error uploading file: {str(e)}",
+        )
+
+
+@router.get("/list", response_model=FilesListResponse)
+def list_files(
+    current_account = Depends(get_current_account)
+):
+    """
+    List all files for the current authenticated user.
+    """
+    try:
+        # Query master node for user's files with folder information
+        # Exclude files that are currently in the recycle bin (not recovered)
+        response = requests.post(f"{MASTER_NODE_URL}/query", json={
+            "sql": """
+                SELECT f.file_id, f.file_name, f.file_size, f.logical_path, f.uploaded_at, 
+                       f.folder_id, fv.erasure_id
+                FROM file_objects f
+                LEFT JOIN file_versions fv ON f.file_id = fv.file_id
+                LEFT JOIN recycle_bin rb ON (f.file_id = rb.resource_id AND rb.resource_type = 'FILE' AND rb.is_recovered = FALSE)
+                WHERE f.account_id = $1
+                AND rb.resource_id IS NULL
+                ORDER BY f.uploaded_at DESC
+            """,
+            "params": [current_account["account_id"]]
+        })
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Master node error")
+        
+        result = response.json()
+        if not result.get("success"):
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to query files")
+        
+        files_data = result.get("data", [])
+        
+        # Convert to FileInfo objects
+        files = []
+        for file_data in files_data:
+            file_info = FileInfo(
+                file_id=file_data["file_id"],
+                file_name=file_data["file_name"],
+                file_size=file_data["file_size"],
+                logical_path=file_data["logical_path"],
+                uploaded_at=file_data["uploaded_at"],
+                folder_id=file_data.get("folder_id"),
+                erasure_id=file_data.get("erasure_id", "MEDIUM")
+            )
+            files.append(file_info)
+        
+        return FilesListResponse(
+            files=files,
+            total=len(files)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listing files: {str(e)}"
         )
