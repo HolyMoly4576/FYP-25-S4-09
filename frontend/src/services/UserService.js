@@ -45,7 +45,7 @@ export function logout() {
 }
 
 // generic request wrapper
-async function authFetch(url, options = {}) {
+export async function authFetch(url, options = {}) {
   const token = getAccessToken();
 
   const headers = {

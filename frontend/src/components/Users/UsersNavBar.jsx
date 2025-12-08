@@ -42,12 +42,12 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
           <NavLink to="/user-dashboard" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             All Files
           </NavLink>  
-          <Link to="/dashboard/shared" className="sidebar-link">
+          <NavLink to="/shared" className="sidebar-link">
             Shared
-          </Link>
-          <Link to="/dashboard/activity" className="sidebar-link">
+          </NavLink>
+          <NavLink to="/activity-history" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             Activity History
-          </Link>
+          </NavLink>
         </nav>
 
         <div className="sidebar-storage">

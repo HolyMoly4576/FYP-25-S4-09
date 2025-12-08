@@ -7,6 +7,7 @@ import RegisterForm from "./components/RegisterForm";
 import Layout from "./components/Layout";
 import UserLayout from "./components/Users/UserLayout";
 import UserDashboard from "./pages/Users/UserDashboard";
+import ActivityHistory from "./pages/Users/ActivityHistory";
 
 function App() {
   const [showLogin, setShowLogin] = useState(false);
@@ -39,14 +40,15 @@ function App() {
         </Route>
 
         {/* REGISTERED USERS PAGES use UserLayout (with UsersNavBar only) */}
+        {/* Dashboard under /user-dashboard */}
         <Route path="/user-dashboard" element={<UserLayout />}>
           <Route index element={<UserDashboard />} />
-          {/* Future:
-          <Route path="files" element={<UserDashboard />} />
-          <Route path="shared" element={<SharedPage />} />
-          <Route path="activity" element={<ActivityPage />} /> */}
         </Route>
-      </Routes>
+        {/* Activity history under /activity-history with same layout */}
+        <Route path="/activity-history" element={<UserLayout />}>
+          <Route index element={<ActivityHistory />} />
+        </Route>  
+        </Routes>
 
       {/* Global modals */}
       {showLogin && <LoginForm toggle={toggleLogin} />}
