@@ -1,0 +1,28 @@
+.public-share-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+}
+
+.public-share-card {
+  background: white;
+  padding: 24px 28px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  max-width: 420px;
+  width: 100%;
+}
+
+.public-share-error {
+  color: #c53030;
+}
+
+.public-share-card h2 {
+  margin-bottom: 12px;
+}
+
+.public-share-card p {
+  margin: 4px 0;
+}

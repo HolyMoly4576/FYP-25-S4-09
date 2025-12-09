@@ -1,9 +1,16 @@
 import React, { useRef, useState, useEffect } from "react";
 import "../../styles/Users/UserDashboard.css";
-import { createFolder, listFolders, moveFolder, uploadFile, listFiles, downloadFile, getFileInfo, searchFilesAndFolders, moveFile } from "../../services/UserService";
+import { useNavigate } from "react-router-dom";
+import { createFolder, listFolders, moveFolder, 
+         uploadFile, listFiles, downloadFile, 
+         getFileInfo, searchFilesAndFolders, moveFile,
+         createFileShare,createFolderShare,
+         searchShareUsers, shareFileWithUser,
+         binDeleteFile, binDeleteFolder, } from "../../services/UserService";
 
 const UserDashboard = () => {
-  const [currentPath, setCurrentPath] = useState("/");
+  const navigate = useNavigate();
+  const [currentPath, setCurrentPath] = useState("/Home");
   const [currentFolderId, setCurrentFolderId] = useState(null); // null = root
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -14,14 +21,41 @@ const UserDashboard = () => {
   const [searchQuery, setSearchQuery] = useState(""); 
   const [moveTargets, setMoveTargets] = useState({}); // { [fileId]: folderId | "" }
   const [dragItem, setDragItem] = useState(null); // { type: 'file' | 'folder', id: string }
+  const [isDragging, setIsDragging] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareData, setShareData] = useState(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareUsername, setShareUsername] = useState("");
+  const [sharePermissions, setSharePermissions] = useState("DOWNLOAD");
+  const [userSuggestions, setUserSuggestions] = useState([]);
+  const [showUserSuggestions, setShowUserSuggestions] = useState(false);
+  const [publicShareData, setPublicShareData] = useState(null);
+  const [publicShareLoading, setPublicShareLoading] = useState(false);
+  const [publicPassword, setPublicPassword] = useState("");
+  const [publicExpires, setPublicExpires] = useState("never"); 
 
   const [openMenuFileId, setOpenMenuFileId] = useState(null);
+  const [openMenuType, setOpenMenuType] = useState(null); // "file" | "folder"
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
 
-  const toggleMenu = (fileId) => {
-    setOpenMenuFileId((prev) => (prev === fileId ? null : fileId));
+  const toggleMenu = (id, type, event) => {
+    setOpenMenuFileId((prev) => (prev === id ? null : id));
+    setOpenMenuType(type || null);
+
+    if (event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      // Show menu below the button, aligned left
+      setMenuPosition({
+        x: rect.left,
+        y: rect.bottom + window.scrollY,
+      });
+    }
   };
 
-  const closeMenu = () => setOpenMenuFileId(null);
+  const closeMenu = () => {
+    setOpenMenuFileId(null);
+    setOpenMenuType(null);
+  };
 
   // Load root folders and files on mount
   useEffect(() => {
@@ -130,8 +164,8 @@ const UserDashboard = () => {
   }
 
   const decimals = size < 10 && unitIndex > 0 ? 2 : size < 100 ? 1 : 0;
-  return `${size.toFixed(decimals)} ${units[unitIndex]}`;
-}
+    return `${size.toFixed(decimals)} ${units[unitIndex]}`;
+  }
 
   const fileInputRef = useRef(null); 
 
@@ -220,9 +254,16 @@ const UserDashboard = () => {
     setNewFolderName("");
   }
 
-  // Derive visible files – currently not folder-aware; adjust when backend adds folder_id on files
-  const visibleFolders = folders; // backend already filters by parent_folder_id
-  const visibleFiles = files;     // TODO: filter by folder when supported
+  const visibleFolders = folders.filter((f) =>
+    currentFolderId === null
+      ? f.parent_folder_id === null // root folders
+      : f.parent_folder_id === currentFolderId
+  );
+  const visibleFiles = files.filter((f) =>
+    currentFolderId === null
+      ? !f.folder_id // root files
+      : f.folder_id === currentFolderId
+  );
 
   function handleMoveTargetChange(fileId, folderId) {
     setMoveTargets((prev) => ({
@@ -241,9 +282,7 @@ const UserDashboard = () => {
     try {
       await moveFile({ fileId: file.file_id, newFolderId: targetFolderId });
       // refresh current view: folders and files
-      await refreshFolders(currentFolderId);
-      const updatedFiles = await listFiles();
-      setFiles(updatedFiles);
+      await loadCurrentFolderData();
       alert("File moved successfully");
     } catch (err) {
       console.error(err);
@@ -257,18 +296,228 @@ const UserDashboard = () => {
       alert("Cannot move a folder into itself");
       return;
     }
+    if (!targetFolderId) {
+      alert("Please select a folder first");
+      return;
+    }
     try {
       await moveFolder({
         folderId: folder.folder_id,
         newParentFolderId: targetFolderId,
       });
-      await refreshFolders(currentFolderId);
+      await loadCurrentFolderData(); // reload folders + files for currentFolderId
       alert("Folder moved successfully");
     } catch (err) {
       console.error(err);
       alert(err.message || "Failed to move folder");
     }
   }
+
+  // Drag-and-drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files || []);
+    if (droppedFiles.length === 0) return;
+
+    setIsLoading(true);
+    try {
+      for (const file of droppedFiles) {
+        // eslint-disable-next-line no-await-in-loop
+        await uploadFile({
+          file,
+          folderId: currentFolderId,
+          erasureId: erasureLevel,
+        });
+      }
+      const data = await listFiles(); // or listFiles(currentFolderId) if you filter by folder
+      setFiles(data);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to upload one or more files");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Folder sharing handler
+  const handleShareFolder = (folder) => {
+    setShareData({ fileId: folder.folder_id, fileName: folder.name, isFolder: true });
+    setShareUsername("");
+    setSharePermissions("DOWNLOAD");
+    setUserSuggestions([]);
+    setShowUserSuggestions(false);
+    setPublicShareData(null);
+    setShareModalOpen(true);
+  };
+
+  // File sharing handler
+  const handleShareFile = (file) => {
+    setShareData({ fileId: file.file_id, fileName: file.file_name });
+    setShareUsername("");
+    setSharePermissions("DOWNLOAD");
+    setUserSuggestions([]);
+    setShowUserSuggestions(false);
+    setPublicShareData(null);       // reset
+    setShareModalOpen(true);
+  };
+
+  // Handle share username input change
+  const handleShareUsernameChange = async (e) => {
+    const value = e.target.value;
+    setShareUsername(value);
+
+    if (value.length < 2) {
+      setUserSuggestions([]);
+      setShowUserSuggestions(false);
+      return;
+    }
+
+    try {
+      const users = await searchShareUsers(value);
+      setUserSuggestions(users);
+      setShowUserSuggestions(true);
+    } catch (err) {
+      console.error(err);
+      setUserSuggestions([]);
+      setShowUserSuggestions(false);
+    }
+  };
+
+  const handleSelectShareUser = (username) => {
+    setShareUsername(username);
+    setShowUserSuggestions(false);
+  };
+
+  // Submit share to user
+  const handleSubmitShareToUser = async () => {
+    if (!shareData?.fileId) return;
+    if (!shareUsername.trim()) {
+      alert("Please enter a username to share with");
+      return;
+    }
+
+    setShareLoading(true);
+    try {
+      const res = await shareFileWithUser({
+        fileId: shareData.fileId,
+        username: shareUsername.trim(),
+        permissions: sharePermissions,
+      });
+      alert(res.message || "File shared successfully");
+      setShareModalOpen(false);
+      setShareData(null);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to share file");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  // Handle creating public share link
+  const handleCreatePublicLink = async () => {
+    if (!shareData) return;
+
+    const expiresHours = getExpiresHoursFromOption(publicExpires);
+    const requirePassword = publicPassword.trim().length > 0;
+
+    setPublicShareLoading(true);
+    try {
+      const payload = {
+        sharedWithUsername: null,
+        permissions: sharePermissions,
+        expiresHours,
+        requirePassword,
+      };
+
+      const res = shareData.isFolder
+        ? await createFolderShare({ folderId: shareData.fileId, ...payload })
+        : await createFileShare({ fileId: shareData.fileId, ...payload });
+
+      setPublicShareData(res);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to create public share link");
+    } finally {
+      setPublicShareLoading(false);
+    }
+  };
+
+  const getExpiresHoursFromOption = (value) => {
+    switch (value) {
+      case "1h":
+        return 1;
+      case "24h":
+        return 24;
+      case "1w":
+        return 24 * 7;
+      case "1m":
+        return 24 * 30;
+      case "never":
+      default:
+        return null; // backend: no expiration
+    }
+  };
+
+  const handleSoftDeleteFolder = async (folder) => {
+    const confirmed = window.confirm(
+      `Move folder "${folder.name}" and all its contents to Recycle Bin?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await binDeleteFolder({ folderId: folder.folder_id });
+      await loadCurrentFolderData(); // same helper you use after upload/move
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to move folder to Recycle Bin");
+    }
+  };
+
+  const handleSoftDeleteFile = async (file) => {
+    const confirmed = window.confirm(
+      `Move file "${file.file_name}" to Recycle Bin?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await binDeleteFile({ fileId: file.file_id });
+      await loadCurrentFolderData();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to move file to Recycle Bin");
+    }
+  };
+
+  const loadCurrentFolderData = async () => {
+    try {
+      const [foldersResult, filesResult] = await Promise.all([
+        listFolders(currentFolderId),
+        listFiles(currentFolderId),
+      ]);
+
+      // Adjust to your actual response shapes
+      setFolders(foldersResult.folders || foldersResult || []);
+      setFiles(filesResult.files || filesResult || []);
+    } catch (err) {
+      console.error("Failed to reload current folder:", err);
+    }
+  };
 
   return (
     <div className="dashboard-container">
@@ -298,11 +547,11 @@ const UserDashboard = () => {
 
         <div className="toolbar-right">
           <button
-            className="toolbar-action-btn"
+            className="toolbar-action-btn-1"
             onClick={goUpOneLevel}
             disabled={isLoading || currentFolderId === null}
           >
-            ↑ Up
+            ↩ Back
           </button>
           <button
             className="toolbar-action-btn"
@@ -368,7 +617,10 @@ const UserDashboard = () => {
       )}
 
       {/* Files table */}
-      <div className="dashboard-table-wrapper">
+      <div className={`dashboard-table-wrapper ${isDragging ? "dragging" : ""}`}
+           onDragOver={handleDragOver}
+           onDragLeave={handleDragLeave}
+           onDrop={handleDrop}>
         <table className="dashboard-table">
           <thead>
             <tr>
@@ -379,6 +631,19 @@ const UserDashboard = () => {
             </tr>
           </thead>
           <tbody>
+            {/* Recycle Bin fixed row */}
+            <tr
+              className="folder-row"
+              style={{ cursor: "pointer", backgroundColor: "#f8f9fb" }}
+              onClick={() => navigate("/users/bin")}
+            >
+              <td colSpan={4}>
+                <strong>🗑️ #recyclebin</strong>{" "}
+                <span style={{ marginLeft: 12, fontSize: "12px", color: "#666" }}>
+                  View deleted files and folders
+                </span>
+              </td>
+            </tr>
             {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ textAlign: "center" }}>
@@ -399,7 +664,6 @@ const UserDashboard = () => {
                     }}
                     onDragEnd={() => setDragItem(null)}
                     onDragOver={(e) => {
-                      // allow dropping other items on this folder
                       e.preventDefault();
                     }}
                     onDrop={async (e) => {
@@ -413,14 +677,13 @@ const UserDashboard = () => {
                             fileId: dragItem.id,
                             newFolderId: folder.folder_id,
                           });
-                          const updatedFiles = await listFiles();
-                          setFiles(updatedFiles);
+                          await loadCurrentFolderData();
                         } else if (dragItem.type === "folder") {
                           await moveFolder({
                             folderId: dragItem.id,
                             newParentFolderId: folder.folder_id,
                           });
-                          await refreshFolders(currentFolderId);
+                          await loadCurrentFolderData();
                         }
                       } catch (err) {
                         console.error(err);
@@ -443,63 +706,13 @@ const UserDashboard = () => {
                         <button
                           type="button"
                           className="table-action-trigger"
-                          onClick={() => toggleMenu(folder.folder_id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMenu(folder.folder_id, "folder", e);
+                          }}
                         >
                           ⋮
                         </button>
-
-                        {openMenuFileId === folder.folder_id && (
-                          <div className="actions-menu-dropdown">
-                            <button
-                              type="button"
-                              className="actions-menu-item"
-                              onClick={() => {
-                                closeMenu();
-                                alert("Folder delete not implemented yet");
-                              }}
-                            >
-                              Delete
-                            </button>
-
-                            <div className="actions-menu-item">
-                              <select
-                                className="search-input"
-                                value={moveTargets[folder.folder_id] || ""}
-                                onChange={(e) =>
-                                  handleMoveTargetChange(
-                                    folder.folder_id,
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="">Move to folder…</option>
-                                {folders
-                                  .filter(
-                                    (f) => f.folder_id !== folder.folder_id
-                                  )
-                                  .map((f) => (
-                                    <option
-                                      key={f.folder_id}
-                                      value={f.folder_id}
-                                    >
-                                      {f.name}
-                                    </option>
-                                  ))}
-                              </select>
-                              <button
-                                type="button"
-                                className="table-action-trigger"
-                                style={{ marginLeft: 4 }}
-                                onClick={() => {
-                                  closeMenu();
-                                  handleMoveFolder(folder);
-                                }}
-                              >
-                                Move
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -530,90 +743,13 @@ const UserDashboard = () => {
                           <button
                             type="button"
                             className="table-action-trigger"
-                            onClick={() => toggleMenu(file.file_id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleMenu(file.file_id, "file", e);
+                            }}
                           >
                             ⋮
                           </button>
-
-                          {openMenuFileId === file.file_id && (
-                            <div className="actions-menu-dropdown">
-                              <button
-                                type="button"
-                                className="actions-menu-item"
-                                onClick={() => {
-                                  closeMenu();
-                                  handleDownload(file);
-                                }}
-                              >
-                                Download
-                              </button>
-                              <button
-                                type="button"
-                                className="actions-menu-item"
-                                onClick={() => {
-                                  closeMenu();
-                                  alert("Delete not implemented yet");
-                                }}
-                              >
-                                Delete
-                              </button>
-
-                              <div className="actions-menu-item">
-                                <select
-                                  className="search-input"
-                                  value={moveTargets[file.file_id] || ""}
-                                  onChange={(e) =>
-                                    handleMoveTargetChange(
-                                      file.file_id,
-                                      e.target.value
-                                    )
-                                  }
-                                >
-                                  <option value="">Select folder</option>
-                                  {folders.map((folder) => (
-                                    <option
-                                      key={folder.folder_id}
-                                      value={folder.folder_id}
-                                    >
-                                      {folder.name}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  type="button"
-                                  className="table-action-trigger"
-                                  style={{ marginLeft: 4 }}
-                                  onClick={() => {
-                                    closeMenu();
-                                    handleMoveFile(file);
-                                  }}
-                                >
-                                  Move
-                                </button>
-                              </div>
-
-                              <button
-                                type="button"
-                                className="actions-menu-item"
-                                onClick={() => {
-                                  closeMenu();
-                                  alert("Share not implemented yet");
-                                }}
-                              >
-                                Share
-                              </button>
-                              <button
-                                type="button"
-                                className="actions-menu-item"
-                                onClick={() => {
-                                  closeMenu();
-                                  openFileInfo(file);
-                                }}
-                              >
-                                File Info
-                              </button>
-                            </div>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -625,27 +761,356 @@ const UserDashboard = () => {
         </table>
       </div>
 
-  {fileInfoModalOpen && fileInfoData && (
-    <div className="modal-backdrop" onClick={closeFileInfo}>
-      <div
-        className="modal-content"
-        onClick={(e) => e.stopPropagation()} // prevent close when clicking inside
-      >
-        <h3 className="modal-title">File Info</h3>
-        <div className="modal-body">
-          <p><strong>Name:</strong> {fileInfoData.file_name}</p>
-          <p><strong>Size:</strong> {formatFileSize(fileInfoData.file_size)}</p>
-          <p><strong>Uploaded:</strong> {new Date(fileInfoData.uploaded_at).toLocaleString()}</p>
-          <p><strong>Erasure Profile:</strong> {fileInfoData.erasure_id}</p>
-          <p><strong>Logical Path:</strong> {fileInfoData.logical_path}</p>
+      {/* File Info Modal */}
+      {fileInfoModalOpen && fileInfoData && (
+        <div className="modal-backdrop" onClick={closeFileInfo}>
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="modal-title">File Info</h3>
+            <div className="modal-body">
+              <p><strong>Name:</strong> {fileInfoData.file_name}</p>
+              <p><strong>Size:</strong> {formatFileSize(fileInfoData.file_size)}</p>
+              <p><strong>Uploaded:</strong> {new Date(fileInfoData.uploaded_at).toLocaleString()}</p>
+              <p><strong>Erasure Profile:</strong> {fileInfoData.erasure_id}</p>
+              <p><strong>Logical Path:</strong> {fileInfoData.logical_path}</p>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="toolbar-action-btn"
+                onClick={closeFileInfo}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="modal-footer">
-          <button type="button" className="toolbar-action-btn" onClick={closeFileInfo}>
-            Close
-          </button>
+      )}
+      
+      {/* Share Modal */}
+      {shareModalOpen && shareData && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowUserSuggestions(false)}
+        >
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="modal-title">Share</h3>
+            <div className="modal-body">
+              <p>
+                <strong>File/Folder:</strong> {shareData.fileName}
+              </p>
+
+              <div className="form-group">
+                <label>One-Time Password (Optional)</label>
+                <input
+                  type="text"
+                  className="toolbar-input"
+                  placeholder="Leave empty for no password"
+                  value={publicPassword}
+                  onChange={(e) => setPublicPassword(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Expires In</label>
+                <select
+                  className="toolbar-input"
+                  value={publicExpires}
+                  onChange={(e) => setPublicExpires(e.target.value)}
+                >
+                  <option value="never">Never</option>
+                  <option value="1h">1 Hour</option>
+                  <option value="24h">24 Hours</option>
+                  <option value="1w">1 Week</option>
+                  <option value="1m">1 Month</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Username to share with (Optional)</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="text"
+                    className="toolbar-input"
+                    placeholder="Enter username..."
+                    value={shareUsername}
+                    onChange={handleShareUsernameChange}
+                  />
+                  {showUserSuggestions && userSuggestions.length > 0 && (
+                    <div className="user-suggestions">
+                      {userSuggestions.map((u) => (
+                        <div
+                          key={u.username}
+                          className="user-suggestion"
+                          onClick={() => handleSelectShareUser(u.username)}
+                        >
+                          <strong>{u.username}</strong>
+                          <br />
+                          <small>{u.email}</small>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Permissions</label>
+                <select
+                  className="toolbar-input"
+                  value={sharePermissions}
+                  onChange={(e) => setSharePermissions(e.target.value)}
+                >
+                  <option value="VIEW">View Only</option>
+                  <option value="DOWNLOAD">Download</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Public Link (optional)</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="toolbar-action-btn"
+                    onClick={handleCreatePublicLink}
+                    disabled={publicShareLoading}
+                  >
+                    {publicShareLoading ? "Generating..." : "Generate Link"}
+                  </button>
+                  {publicShareData && (
+                    <button
+                      type="button"
+                      className="toolbar-action-btn"
+                      onClick={() => {
+                        const frontendBase = window.location.origin;
+                        const fullUrl = `${frontendBase}/shares/files/access/${publicShareData.share_token}`;
+
+                        const textToCopy = `${fullUrl}${
+                          publicShareData.one_time_password
+                            ? ` (password: ${publicShareData.one_time_password})`
+                            : ""
+                        }`;
+                        navigator.clipboard.writeText(textToCopy).catch(() => {});
+                      }}
+                                      >
+                                        Copy Link
+                                      </button>
+                                    )}
+                </div>
+
+                {publicShareData && (
+                  <div style={{ marginTop: 8, fontSize: 13 }} className="share-url-text">
+                    <div>
+                      <strong>URL:</strong>{" "}
+                      <code>{publicShareData.share_url}</code>
+                    </div>
+                    {publicShareData.one_time_password && (
+                      <div>
+                        <strong>Password:</strong>{" "}
+                        <code>{publicShareData.one_time_password}</code>
+                      </div>
+                    )}
+                    {publicShareData.expires_at && (
+                      <div>
+                        <strong>Expires:</strong>{" "}
+                        {new Date(publicShareData.expires_at).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="toolbar-action-btn"
+                onClick={handleSubmitShareToUser}
+                disabled={shareLoading}
+              >
+                Share
+              </button>
+              <button
+                type="button"
+                className="toolbar-action-btn"
+                onClick={() => {
+                  setShareModalOpen(false);
+                  setShareData(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+
+      {openMenuFileId && (
+        <div
+          className="actions-menu-dropdown floating-menu"
+          style={{
+            position: "fixed",
+            top: menuPosition.y,
+            left: menuPosition.x,
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {openMenuType === "folder" && (
+            <>
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const folder = folders.find((f) => f.folder_id === openMenuFileId);
+                  if (!folder) return;
+                  closeMenu();
+                  handleSoftDeleteFolder(folder);
+                }}
+              >
+                Delete
+              </button>
+
+              <div className="actions-menu-item">
+                <select
+                  className="search-input"
+                  value={moveTargets[openMenuFileId] || ""}
+                  onChange={(e) =>
+                    handleMoveTargetChange(openMenuFileId, e.target.value)
+                  }
+                >
+                  <option value="">Select folder</option>
+                  {folders.map((f) => (
+                    <option key={f.folder_id} value={f.folder_id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="table-action-trigger"
+                  style={{ marginLeft: 4 }}
+                  onClick={() => {
+                    const folder = folders.find((f) => f.folder_id === openMenuFileId);
+                    if (!folder) return;
+                    closeMenu();
+                    handleMoveFolder(folder);
+                  }}
+                >
+                  Move
+                </button>
+              </div>
+
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const folder = folders.find((f) => f.folder_id === openMenuFileId);
+                  if (!folder) return;
+                  closeMenu();
+                  handleShareFolder(folder);
+                }}
+                disabled={shareLoading}
+              >
+                Share
+              </button>
+            </>
+          )}
+
+          {openMenuType === "file" && (
+            <>
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const file = visibleFiles.find((f) => f.file_id === openMenuFileId);
+                  if (!file) return;
+                  closeMenu();
+                  handleDownload(file);
+                }}
+              >
+                Download
+              </button>
+
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const file = visibleFiles.find((f) => f.file_id === openMenuFileId);
+                  if (!file) return;
+                  closeMenu();
+                  handleSoftDeleteFile(file);
+                }}
+              >
+                Delete
+              </button>
+
+              <div className="actions-menu-item">
+                <select
+                  className="search-input"
+                  value={moveTargets[openMenuFileId] || ""}
+                  onChange={(e) =>
+                    handleMoveTargetChange(openMenuFileId, e.target.value)
+                  }
+                >
+                  <option value="">Select folder</option>
+                  {folders.map((f) => (
+                    <option key={f.folder_id} value={f.folder_id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="table-action-trigger"
+                  style={{ marginLeft: 4 }}
+                  onClick={() => {
+                    const file = visibleFiles.find(
+                      (f) => f.file_id === openMenuFileId
+                    );
+                    if (!file) return;
+                    closeMenu();
+                    handleMoveFile(file);
+                  }}
+                >
+                  Move
+                </button>
+              </div>
+
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const file = visibleFiles.find((f) => f.file_id === openMenuFileId);
+                  if (!file) return;
+                  closeMenu();
+                  handleShareFile(file);
+                }}
+                disabled={shareLoading}
+              >
+                Share
+              </button>
+
+              <button
+                type="button"
+                className="actions-menu-item"
+                onClick={() => {
+                  const file = visibleFiles.find((f) => f.file_id === openMenuFileId);
+                  if (!file) return;
+                  closeMenu();
+                  openFileInfo(file);
+                }}
+              >
+                File Info
+              </button>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
