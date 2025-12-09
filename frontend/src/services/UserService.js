@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:8004";  
+export const API_BASE_URL = "http://localhost:8004";  
 const TOKEN_KEY = "accessToken";
 const USER_KEY = "user";
 

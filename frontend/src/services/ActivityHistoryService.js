@@ -1,6 +1,4 @@
-import { authFetch } from "./UserService"; 
-
-const API_BASE_URL = "http://localhost:8004";
+import { API_BASE_URL, authFetch } from "./UserService";
 
 export async function getActivityHistory({
   dateFilter,

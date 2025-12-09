@@ -8,6 +8,8 @@ import Layout from "./components/Layout";
 import UserLayout from "./components/Users/UserLayout";
 import UserDashboard from "./pages/Users/UserDashboard";
 import ActivityHistory from "./pages/Users/ActivityHistory";
+import UserManagement from "./pages/Users/UserManagement";
+import AccountManagement from "./pages/Users/AccountManagementService";
 
 function App() {
   const [showLogin, setShowLogin] = useState(false);
@@ -47,7 +49,15 @@ function App() {
         {/* Activity history under /activity-history with same layout */}
         <Route path="/activity-history" element={<UserLayout />}>
           <Route index element={<ActivityHistory />} />
+        </Route>
+        {/* User Management under /user-management with same layout */}
+        <Route path="/user-management" element={<UserLayout />}>
+          <Route index element={<UserManagement />} />
         </Route>  
+        {/* Account Management under /account-management with same layout */}
+        <Route path="/account-management" element={<UserLayout />}>
+          <Route index element={<AccountManagement />} />
+        </Route> 
         </Routes>
 
       {/* Global modals */}
