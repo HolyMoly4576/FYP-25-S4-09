@@ -7,6 +7,7 @@ import { createFolder, listFolders, moveFolder,
          createFileShare,createFolderShare,
          searchShareUsers, shareFileWithUser,
          binDeleteFile, binDeleteFolder, } from "../../services/UserService";
+import { Tooltip } from "./Tooltip";
 
 const UserDashboard = () => {
   const navigate = useNavigate();
@@ -568,16 +569,34 @@ const UserDashboard = () => {
             multiple
           />
           {/* Erasure level selector */}
+          <Tooltip
+            label={
+                <>
+                  <strong>Select Redundancy Level</strong>
+                  <br /><br />
+                  <strong>Low Redundancy (4+2 = 6 fragments)</strong><br />
+                  Provides basic protection. Your file is split into pieces with a few backups, so it can still be recovered even if up to 2 pieces are lost.
+                  <br /><br />
+                  <strong>Medium Redundancy (6+3 = 9 fragments)</strong><br />
+                  A balanced option. More pieces and more backups, allowing the file to be recovered even if up to 3 pieces go missing.
+                  <br /><br />
+                  <strong>High Redundancy (8+4 = 12 fragments)</strong><br />
+                  The safest option. Lots of backups, so the file can be recovered even if up to 4 pieces are lost. Good for important data.
+                </>
+              }
+          >
           <select
             className="toolbar-select"
             value={erasureLevel}
             onChange={(e) => setErasureLevel(e.target.value)}
             disabled={isLoading}
+            aria-describedby="redundancy-tooltip"
           >
             <option value="LOW">Low</option>
             <option value="MEDIUM">Medium</option>
             <option value="HIGH">High</option>
           </select>
+        </Tooltip>
           <button
             className="toolbar-action-btn"
             onClick={handleUploadClick}

@@ -227,3 +227,39 @@
   word-break: break-all;      /* or: overflow-wrap: anywhere; */
   white-space: normal;
 }
+
+/* Positioning wrapper */
+.tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+/* Hidden by default */
+.tooltip-panel {
+  position: absolute;
+  z-index: 50;
+  min-width: 260px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: #111827; /* dark gray */
+  color: #f9fafb; /* almost white */
+  font-size: 0.75rem;
+  line-height: 1.2;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  top: 100%;
+  /* instead of right:0; open to the LEFT of the button */
+  left: auto;
+  right: 0;                 /* keep right alignment to wrapper */
+  transform: translateX(-100%); /* shift the whole menu left of the button */
+}
+
+/* Show on hover/focus */
+.tooltip-wrapper:hover .tooltip-panel,
+.tooltip-wrapper:focus-within .tooltip-panel {
+  opacity: 1;
+  transform: translateY(0);
+}
