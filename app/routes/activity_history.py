@@ -7,6 +7,7 @@ import json
 
 from app.master_node_db import MasterNodeDB, get_master_db
 from app.core.security import decode_access_token
+from app.core.timezone_utils import parse_date_to_local_range, to_local_timezone
 from app.routes.login import oauth2_scheme
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,20 @@ class ActivityDetail(BaseModel):
     
     @validator('created_at', pre=True)
     def serialize_datetime(cls, v):
+        # Import here to avoid circular imports
+        from app.core.timezone_utils import to_local_timezone
+        
         if isinstance(v, datetime):
-            return v.isoformat()
+            # Convert to local timezone for display
+            local_dt = to_local_timezone(v)
+            return local_dt.isoformat()
         elif hasattr(v, 'isoformat'):
-            return v.isoformat()
+            # Handle other datetime-like objects
+            if hasattr(v, 'astimezone'):
+                local_dt = to_local_timezone(v)
+                return local_dt.isoformat()
+            else:
+                return v.isoformat()
         return str(v)
 
 
@@ -90,11 +101,9 @@ def get_activity_history(
         end_datetime = None
         if date_filter:
             try:
-                # Parse date string (YYYY-MM-DD)
-                filter_date = datetime.strptime(date_filter, "%Y-%m-%d").date()
-                # Create datetime range for the entire day (00:00:00 to 23:59:59)
-                start_datetime = datetime.combine(filter_date, datetime.min.time()).replace(tzinfo=timezone.utc)
-                end_datetime = datetime.combine(filter_date, datetime.max.time()).replace(tzinfo=timezone.utc)
+                # Parse date string and get UTC range for database query
+                # This handles the local timezone (SGT) to UTC conversion automatically
+                start_datetime, end_datetime = parse_date_to_local_range(date_filter)
                 
                 sql_conditions.append(f"created_at >= ${param_index}")
                 params.append(start_datetime.isoformat())  # Convert to ISO string for master node
@@ -107,7 +116,7 @@ def get_activity_history(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid date format. Use YYYY-MM-DD (e.g., 2025-11-15)"
+                    detail="Invalid date format. Use YYYY-MM-DD (e.g., 2025-12-10)"
                 )
         
         # Apply action type filter if provided

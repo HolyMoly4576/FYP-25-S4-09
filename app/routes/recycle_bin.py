@@ -11,6 +11,7 @@ from app.models import Account, FileObject, Folder, RecycleBin
 from app.routes.login import oauth2_scheme
 from app.core.security import decode_access_token
 from app.core.activity_logger import log_activity
+from app.core.timezone_utils import now_utc, to_local_timezone
 
 router = APIRouter(prefix="/bin", tags=["Recycle Bin"])
 
@@ -149,7 +150,7 @@ async def delete_file(
         original_path=file_path,
         original_size=file_obj.file_size,
         deleted_by=current_user.account_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        expires_at=now_utc() + timedelta(days=30),
         deletion_reason=request.deletion_reason,
         bin_metadata={
             "file_type": file_obj.file_name.split('.')[-1] if '.' in file_obj.file_name else None,
@@ -317,7 +318,7 @@ async def delete_folder(
             original_path=file_path,
             original_size=file_obj.file_size,
             deleted_by=current_user.account_id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            expires_at=now_utc() + timedelta(days=30),
             deletion_reason=f"CASCADE_DELETE_FROM_FOLDER:{folder.name}",
             bin_metadata={
                 "file_type": file_obj.file_name.split('.')[-1] if '.' in file_obj.file_name else None,
@@ -359,7 +360,7 @@ async def delete_folder(
             original_path=subfolder_path,
             original_size=None,
             deleted_by=current_user.account_id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            expires_at=now_utc() + timedelta(days=30),
             deletion_reason=f"CASCADE_DELETE_FROM_FOLDER:{folder.name}",
             bin_metadata={
                 "created_at": subfolder.created_at.isoformat(),
@@ -396,7 +397,7 @@ async def delete_folder(
         original_path=folder_path,
         original_size=total_files_size,  # Total size of all files in the folder
         deleted_by=current_user.account_id,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        expires_at=now_utc() + timedelta(days=30),
         deletion_reason=request.deletion_reason,
         bin_metadata={
             "created_at": folder.created_at.isoformat(),
@@ -457,7 +458,7 @@ async def list_bin_items(
     
     result = []
     for item in bin_items:
-        days_remaining = (item.expires_at - datetime.now(timezone.utc)).days
+        days_remaining = (item.expires_at - now_utc()).days
         days_remaining = max(0, days_remaining)  # Don't show negative days
         
         result.append(BinItemResponse(
@@ -500,7 +501,7 @@ async def get_bin_stats(
         oldest_item = min(item.deleted_at for item in bin_items)
     
     # Items expiring in next 7 days
-    seven_days_from_now = datetime.now(timezone.utc) + timedelta(days=7)
+    seven_days_from_now = now_utc() + timedelta(days=7)
     items_expiring_soon = sum(
         1 for item in bin_items 
         if item.expires_at <= seven_days_from_now
@@ -539,7 +540,7 @@ async def restore_item(
         )
     
     # Check if item has expired
-    if bin_item.expires_at <= datetime.now(timezone.utc):
+    if bin_item.expires_at <= now_utc():
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Item has expired and cannot be recovered"
@@ -565,7 +566,7 @@ async def restore_item(
     
     # Mark as recovered
     bin_item.is_recovered = "TRUE"
-    bin_item.recovered_at = datetime.now(timezone.utc)
+    bin_item.recovered_at = now_utc()
     bin_item.recovered_by = current_user.account_id
     
     # Log the recovery activity
@@ -579,7 +580,7 @@ async def restore_item(
             "original_name": bin_item.original_name,
             "original_path": bin_item.original_path,
             "deleted_at": bin_item.deleted_at.isoformat(),
-            "days_in_bin": (datetime.now(timezone.utc) - bin_item.deleted_at).days
+            "days_in_bin": (now_utc() - bin_item.deleted_at).days
         }
     )
     
@@ -740,7 +741,7 @@ async def cleanup_expired_items(
     # Find expired items
     expired_items = db.query(RecycleBin).filter(
         and_(
-            RecycleBin.expires_at <= datetime.now(timezone.utc),
+            RecycleBin.expires_at <= now_utc(),
             RecycleBin.is_recovered == "FALSE"
         )
     ).all()
