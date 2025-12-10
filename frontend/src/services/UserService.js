@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://localhost:8004";  
+export const API_BASE_URL = "http://localhost:8004";  
 const TOKEN_KEY = "accessToken";
 const USER_KEY = "user";
 
@@ -74,8 +74,8 @@ export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }
     new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        const result = reader.result;
-        const base64 = result.split(",")[1];
+        const result = reader.result;             // "data:...;base64,AAAA"
+        const base64 = result.split(",")[1];      // keep base64 only
         resolve(base64);
       };
       reader.onerror = (err) => reject(err);
@@ -88,8 +88,8 @@ export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }
     filename: file.name,
     data: base64Data,
     content_type: file.type || "application/octet-stream",
-    folder_id: folderId,
-    erasure_id: erasureId, // this will be LOW/MEDIUM/HIGH from UI
+    folder_id: folderId,          // string or null; backend expects str | None
+    erasure_id: erasureId,        // "LOW" | "MEDIUM" | "HIGH"
   };
 
   const response = await authFetch(`${API_BASE_URL}/files/upload`, {
@@ -101,7 +101,7 @@ export async function uploadFile({ file, folderId = null, erasureId = "MEDIUM" }
   if (!response.ok) {
     throw new Error(result.detail || result.message || "Failed to upload file");
   }
-  return result;
+  return result; // FileUploadResponse
 }
 
 // ---------- File list ----------
@@ -255,21 +255,14 @@ export async function listFolders(parentFolderId = null) {
   if (parentFolderId) {
     params.append("parent_folder_id", parentFolderId);
   }
-
-  const url =
-    params.toString().length > 0
-      ? `${API_BASE_URL}/folders/list?${params.toString()}`
-      : `${API_BASE_URL}/folders/list`;
-
-  const response = await authFetch(url, { method: "GET" });
-
+  const response = await authFetch(
+    `${API_BASE_URL}/folders/list?${params.toString()}`
+  );
   const result = await response.json();
   if (!response.ok) {
-    throw new Error(result.detail || result.message || "Failed to fetch folders");
+    throw new Error(result.detail || result.message || "Failed to list folders");
   }
-
-  // backend returns { folders: FolderResponse[], total: number }
-  return result.folders || [];
+  return result.folders || result;
 }
 
 // ---------- Move folder ----------
@@ -291,6 +284,118 @@ export async function moveFolder({ folderId, newParentFolderId }) {
     );
   }
   return result; // FolderResponse
+}
+
+// ---------- File sharing ----------
+export async function createFileShare({
+  fileId,
+  sharedWithUsername = null,
+  permissions = "DOWNLOAD",
+  expiresHours = null,
+  requirePassword = false,
+}) {
+  const body = {
+    file_id: fileId,
+    shared_with_username: sharedWithUsername,
+    permissions,
+    expires_hours: expiresHours,
+    require_password: requirePassword,
+  };
+
+  const response = await authFetch(`${API_BASE_URL}/shares/files/create`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to create file share");
+  }
+  return result; // { share_url, one_time_password, ... }
+}
+
+// ---------- Folder sharing ----------
+export async function createFolderShare({
+  folderId,
+  sharedWithUsername = null,
+  permissions = "DOWNLOAD",     // or "DOWNLOAD" if you support that for folders
+  expiresHours = 24,
+  requirePassword = true,
+}) {
+  const body = {
+    folder_id: folderId,
+    shared_with_username: sharedWithUsername,
+    permissions,
+    expires_hours: expiresHours,
+    require_password: requirePassword,
+  };
+
+  const response = await authFetch(`${API_BASE_URL}/shares/folders/create`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to create folder share");
+  }
+
+  return result; // ShareResponse
+}
+
+// ---------- Sharing: list "shared with me" ----------
+export async function getFilesSharedWithMe() {
+  const response = await authFetch(`${API_BASE_URL}/shares/with-me`, {
+    method: "GET",
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to load shared files");
+  }
+
+  // result is an array of SharedWithMeResponse
+  return result;
+}
+
+// ---------- Sharing: search users ----------
+export async function searchShareUsers(query) {
+  if (!query || query.length < 2) return [];
+  const response = await authFetch(
+    `${API_BASE_URL}/shares/users/search?q=${encodeURIComponent(query)}`,
+    { method: "GET" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to search users");
+  }
+
+  return result; // array of { username, email, ... }
+}
+
+// ---------- Sharing: share file with specific user ----------
+export async function shareFileWithUser({ fileId, username, permissions }) {
+  const body = {
+    file_id: fileId,
+    username,
+    permissions, // "VIEW" or "DOWNLOAD"
+  };
+
+  const response = await authFetch(
+    `${API_BASE_URL}/shares/files/share-with-user`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to share file");
+  }
+
+  return result; // { message: ... }
 }
 
 // ---------- Storage usage ----------
@@ -315,5 +420,153 @@ export async function getStorageUsage() {
     );
   }
 
+  return result;
+}
+
+// Delete folder (hard delete)
+export async function deleteFolder(folderId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/folders/${folderId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      result.detail || result.message || "Failed to delete folder"
+    );
+  }
+  return result; // { message, deleted_folder_id, deleted_folder_name }
+}
+
+// Delete file (hard delete)
+export async function deleteFile(fileId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/files/${fileId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      result.detail || result.message || "Failed to delete file"
+    );
+  }
+  return result; // { message, deleted_file_id, deleted_file_name }
+}
+
+// ---- Recycle Bin: soft delete ----
+
+// Move a file to recycle bin
+export async function binDeleteFile({ fileId, deletionReason = "USER_DELETE" }) {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/delete-file`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        file_id: fileId,
+        deletion_reason: deletionReason,
+      }),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to move file to recycle bin");
+  }
+  return result; // { message, bin_id, expires_at, retention_days }
+}
+
+// Move a folder (and its contents) to recycle bin
+export async function binDeleteFolder({ folderId, deletionReason = "USER_DELETE" }) {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/delete-folder`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        folder_id: folderId,
+        deletion_reason: deletionReason,
+      }),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to move folder to recycle bin");
+  }
+  return result;
+}
+
+// ---- Recycle Bin: list / restore / empty ----
+
+export async function listBinItems() {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/list`,
+    { method: "GET" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to load recycle bin items");
+  }
+  return result; // Array<BinItemResponse>
+}
+
+export async function getBinStats() {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/stats`,
+    { method: "GET" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to load recycle bin stats");
+  }
+  return result; // BinStatsResponse
+}
+
+export async function restoreBinItem(binId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/restore`,
+    {
+      method: "POST",
+      body: JSON.stringify({ bin_id: binId }),
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to restore item");
+  }
+  return result;
+}
+
+export async function emptyBin() {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/empty`,
+    { method: "DELETE" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to empty recycle bin");
+  }
+  return result;
+}
+
+export async function permanentDeleteBinItem(binId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/bin/permanent-delete/${binId}`,
+    { method: "DELETE" }
+  );
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.detail || result.message || "Failed to permanently delete item");
+  }
   return result;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Outlet } from "react-router-dom";
 import UsersNavBar from "./UsersNavBar";
 import { getStorageUsage } from "../../services/UserService";
@@ -8,34 +8,36 @@ const UserLayout = () => {
   const [loadingUsage, setLoadingUsage] = useState(true);
   const [usageError, setUsageError] = useState(null);
 
-  useEffect(() => {
+  const refreshUsage = useCallback(async () => {
     let isMounted = true;
+    setLoadingUsage(true);
+    setUsageError(null);
 
-    const loadUsage = async () => {
-      try {
-        const data = await getStorageUsage();
-        if (isMounted) {
-          setStorageUsage(data);
-          setUsageError(null);
-        }
-      } catch (err) {
-        if (isMounted) {
-          console.error("Failed to load storage usage", err);
-          setUsageError(err.message || "Failed to load storage usage");
-        }
-      } finally {
-        if (isMounted) {
-          setLoadingUsage(false);
-        }
+    try {
+      const data = await getStorageUsage();
+      if (isMounted) {
+        setStorageUsage(data);
       }
-    };
-
-    loadUsage();
+    } catch (err) {
+      if (isMounted) {
+        console.error("Failed to load storage usage", err);
+        setUsageError(err.message || "Failed to load storage usage");
+      }
+    } finally {
+      if (isMounted) {
+        setLoadingUsage(false);
+      }
+    }
 
     return () => {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    // initial load
+    refreshUsage();
+  }, [refreshUsage]);
 
   return (
     <UsersNavBar
@@ -43,7 +45,8 @@ const UserLayout = () => {
       loadingUsage={loadingUsage}
       usageError={usageError}
     >
-      <Outlet />
+      {/* Provide refreshUsage to all nested routes */}
+      <Outlet context={{ refreshUsage }} />
     </UsersNavBar>
   );
 };

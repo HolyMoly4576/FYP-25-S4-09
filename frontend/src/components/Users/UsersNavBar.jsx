@@ -42,7 +42,7 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
           <NavLink to="/user-dashboard" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             All Files
           </NavLink>  
-          <NavLink to="/shared" className="sidebar-link">
+          <NavLink to="/shared" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
             Shared
           </NavLink>
           <NavLink to="/activity-history" className={({ isActive }) => "sidebar-link" + (isActive ? " sidebar-link-active" : "") } >
@@ -51,13 +51,26 @@ const UsersNavBar = ({ storageUsage, loadingUsage, usageError, children }) => {
         </nav>
 
         <div className="sidebar-storage">
-          <span className="storage-label">Storage Usage</span>
-          {loadingUsage && (
-            <span className="storage-value">Loading...</span>
-          )}
+          <span className="storage-label">
+            Storage Usage{" "}
+            {!loadingUsage && !usageError && storageUsage && (
+              <span
+                className={
+                  "storage-plan-badge " +
+                  (storageUsage.account_type === "PAID" ? "paid" : "free")
+                }
+              >
+                {storageUsage.account_type}
+              </span>
+            )}
+          </span>
+
+          {loadingUsage && <span className="storage-value">Loading...</span>}
+
           {!loadingUsage && usageError && (
             <span className="storage-value">Error</span>
           )}
+
           {!loadingUsage && !usageError && storageUsage && (
             <span className="storage-value">
               {storageUsage.used_gb} GB of {storageUsage.storage_limit_gb} GB used

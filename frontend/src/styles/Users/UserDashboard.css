@@ -56,6 +56,25 @@
   gap: 8px;
 }
 
+.toolbar-action-btn-1 {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  background-color: #b0bec2;
+  color: #ffffff;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+}
+
+.toolbar-action-btn-1:hover {
+  background-color: #a7b3b9;
+}
+
+.toolbar-action-btn-1:active {
+  transform: scale(0.97);
+}
+
 .toolbar-action-btn {
   padding: 6px 12px;
   border-radius: 999px;
@@ -82,6 +101,11 @@
   overflow-x: auto;       /* optional: scroll horizontally if many columns */
   border: 1px solid #ddd; /* optional: visual boundary */
   border-radius: 4px;
+}
+
+.dashboard-table-wrapper.dragging {
+  outline: 2px dashed #4a90e2;
+  background-color: rgba(74, 144, 226, 0.04);
 }
 
 /* Optional: keep header visible while scrolling */
@@ -149,15 +173,20 @@
 
 .actions-menu-dropdown {
   position: absolute;
-  right: 0;
   top: 100%;
   margin-top: 4px;
-  min-width: 150px;
+
+  /* instead of right:0; open to the LEFT of the button */
+  left: auto;
+  right: 0;                 /* keep right alignment to wrapper */
+  transform: translateX(-100%); /* shift the whole menu left of the button */
+
+  min-width: 180px;
   background: #ffffff;
   border: 1px solid #ddd;
-  border-radius: 4px;
+  border-radius: 6px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-  z-index: 10;
+  z-index: 50;
 }
 
 .actions-menu-item {
@@ -192,4 +221,45 @@
   max-width: 420px;
   width: 100%;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.share-url-text {
+  word-break: break-all;      /* or: overflow-wrap: anywhere; */
+  white-space: normal;
+}
+
+/* Positioning wrapper */
+.tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+/* Hidden by default */
+.tooltip-panel {
+  position: absolute;
+  z-index: 50;
+  min-width: 260px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: #111827; /* dark gray */
+  color: #f9fafb; /* almost white */
+  font-size: 0.75rem;
+  line-height: 1.2;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  top: 100%;
+  /* instead of right:0; open to the LEFT of the button */
+  left: auto;
+  right: 0;                 /* keep right alignment to wrapper */
+  transform: translateX(-100%); /* shift the whole menu left of the button */
+}
+
+/* Show on hover/focus */
+.tooltip-wrapper:hover .tooltip-panel,
+.tooltip-wrapper:focus-within .tooltip-panel {
+  opacity: 1;
+  transform: translateY(0);
 }
