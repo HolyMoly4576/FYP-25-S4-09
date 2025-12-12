@@ -1,9 +1,12 @@
+import os
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, Field, AliasChoices
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_FILE = BASE_DIR / ".env"   # OK locally, ignored on Vercel
+ENV_FILE = BASE_DIR / ".env"
+
+IS_VERCEL = os.getenv("VERCEL", None) is not None
 
 class Settings(BaseSettings):
     master_node_url: str = Field(
@@ -18,7 +21,10 @@ class Settings(BaseSettings):
 
     database_url: str = Field(
         default="postgresql+psycopg2://test_user:test_password@test_postgres_db:5432/test_fyp",
-        validation_alias=AliasChoices("database_url", "DATABASE_URL", "test_database_url", "TEST_DATABASE_URL")
+        validation_alias=AliasChoices(
+            "database_url", "DATABASE_URL", 
+            "test_database_url", "TEST_DATABASE_URL"
+        )
     )
 
     jwt_secret_key: str = Field(
@@ -39,12 +45,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("environment", "ENVIRONMENT")
     )
 
+    # IMPORTANT
     model_config = ConfigDict(
-        env_file=str(ENV_FILE),    # works locally
+        env_file=None if IS_VERCEL else str(ENV_FILE),
         env_file_encoding="utf-8-sig",
         extra="ignore",
-        case_sensitive=False
+        case_sensitive=False,
     )
+
 
 def get_settings(testing: bool = False):
     settings = Settings()
