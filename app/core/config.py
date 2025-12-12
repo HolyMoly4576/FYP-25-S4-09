@@ -74,17 +74,16 @@ class Settings(BaseSettings):
     )
 
     model_config = ConfigDict(
-        env_file=str(ENV_FILE),
         env_file=str(ENV_FILE),    # works locally
         env_file_encoding="utf-8-sig",
         extra="ignore",
         case_sensitive=False
     )
 
-    def get_settings(testing: bool = False):
-        settings = Settings()
-        if testing:
-            settings.database_url = settings.test_database_url
-            settings.jwt_secret_key = "testsecret"
-            settings.access_token_expire_minutes = 5
-        return settings
+def get_settings(testing: bool = False):
+    settings = Settings()
+    if testing:
+        settings.database_url = settings.test_database_url
+        settings.jwt_secret_key = "testsecret"
+        settings.access_token_expire_minutes = 5
+    return settings
