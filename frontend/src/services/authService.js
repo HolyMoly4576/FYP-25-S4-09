@@ -1,5 +1,7 @@
+import { API_BASE_URL } from "./UserService";
+
 export async function loginUser(credentials) {
-    const response = await fetch("http://localhost:8004/auth/login", {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -19,7 +21,7 @@ export async function loginUser(credentials) {
 
 export async function getRoles() {
     // Fetches user profiles for use as roles
-    const response = await fetch("http://localhost:8004/userprofiles", {
+    const response = await fetch(`${API_BASE_URL}/userprofiles`, {
         method: "GET",
         headers: {
             "Content-Type": "application/json"

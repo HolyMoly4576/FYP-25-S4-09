@@ -1,5 +1,7 @@
+import { API_BASE_URL } from "./UserService";
+
 export const register = async (username, email, password) => {
-  const response = await fetch("http://localhost:8004/auth/register", {
+  const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
