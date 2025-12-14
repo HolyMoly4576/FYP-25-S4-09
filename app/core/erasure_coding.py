@@ -202,9 +202,9 @@ def get_fallback_profile(profile_id: str) -> Dict[str, Any]:
     """Fallback hardcoded profiles if master node is unavailable."""
     # These values should match what the master node returns from database
     profiles = {
-        'LOW': {'k': 4, 'm': 2, 'erasure_id': 'LOW'},      # Database: k=4, m=2
-        'MEDIUM': {'k': 6, 'm': 3, 'erasure_id': 'MEDIUM'},  # Database: k=6, m=3
-        'HIGH': {'k': 8, 'm': 4, 'erasure_id': 'HIGH'}       # Database: k=8, m=4
+        'LOW': {'k': 6, 'm': 1, 'erasure_id': 'LOW'},      # Database: k=6, m=1
+        'MEDIUM': {'k': 5, 'm': 2, 'erasure_id': 'MEDIUM'},  # Database: k=5, m=2
+        'HIGH': {'k': 4, 'm': 3, 'erasure_id': 'HIGH'}       # Database: k=3, m=3
     }
     
     if profile_id not in profiles:

@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # Master Node - Coordinates the distributed storage system
+  master_node:
+    image: aiess/master-node:latest
+    environment:
+      NODE_ROLE: MASTER
+      NODE_HOSTNAME: master_node
+      NODE_PORT: 3000
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/master_node
+      # Google Cloud SQL PostgreSQL Connection
+      POSTGRES_HOST: <YOUR_CLOUD_SQL_IP>
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "<YOUR_DB_PASSWORD>"
+      POSTGRES_DB: <YOUR_DB_NAME>
+      POSTGRES_MAX_CONNECTIONS: 25
+      POSTGRES_MIN_CONNECTIONS: 5
+      POSTGRES_SSL: "true"
+    ports:
+      - "8000:3000"
+    volumes:
+      - master_node_data:/data
+    networks:
+      storage_network:
+        aliases:
+          - master_node
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+
+  # FastAPI Application - REST API for file operations
+  fastapi:
+    image: aiess/fastapi-backend:latest
+    environment:
+      # Google Cloud SQL PostgreSQL Connection
+      DATABASE_URL: "postgresql://postgres:<YOUR_DB_PASSWORD>@<YOUR_CLOUD_SQL_IP>:5432/<YOUR_DB_NAME>?sslmode=require"
+      MASTER_NODE_URL: http://master_node:3000
+      JWT_SECRET_KEY: <YOUR_JWT_SECRET_KEY>
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ENVIRONMENT: production
+    ports:
+      - "8004:8000"
+    networks:
+      - storage_network
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+
+  # Storage Nodes - Store erasure-coded file fragments
+  # 7 replicas distributed across worker nodes
+  storage_node:
+    image: aiess/storage-node:latest
+    environment:
+      MASTER_NODE_HOST: master_node
+      MASTER_NODE_PORT: 3000
+      NODE_ROLE: STORAGE
+      HEARTBEAT_INTERVAL: 30000
+      STORAGE_PATH: /data/storage
+    volumes:
+      - storage_data:/data
+    networks:
+      - storage_network
+    deploy:
+      replicas: 7
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+
+networks:
+  # Overlay network for multi-host communication
+  storage_network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  master_node_data:
+  storage_data:

@@ -17,30 +17,39 @@ app.use((req, res, next) => {
 });
 
 // PostgreSQL connection pool
+// PostgreSQL connection pool
 let pool;
 
 // Initialize PostgreSQL database connection with enhanced configuration
 async function initializeDatabase() {
     try {
-        const connectionString = process.env.DATABASE_URL || 
-            `postgresql://${process.env.POSTGRES_USER || 'user'}:${process.env.POSTGRES_PASSWORD || 'password'}@${process.env.POSTGRES_HOST || 'postgres_db'}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB || 'database'}`;
-        
-        pool = new Pool({
-            connectionString: connectionString,
-            max: 25, // Increased pool size for better concurrency
-            min: 5,  // Minimum connections to maintain
+        // Don't use connectionString - use direct config object instead!
+        const poolConfig = {
+            host: process.env.POSTGRES_HOST || 'postgres_db',
+            port: parseInt(process.env.POSTGRES_PORT || '5432'),
+            user: process.env.POSTGRES_USER || 'user',
+            password: process.env.POSTGRES_PASSWORD || 'password',
+            database: process.env.POSTGRES_DB || 'database',
+            ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false,
+            max: parseInt(process.env.POSTGRES_MAX_CONNECTIONS || '25'),
+            min: parseInt(process.env.POSTGRES_MIN_CONNECTIONS || '5'),
             idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000, // Increased timeout
+            connectionTimeoutMillis: 5000,
             acquireTimeoutMillis: 60000,
             createTimeoutMillis: 30000,
             destroyTimeoutMillis: 5000,
             reapIntervalMillis: 1000,
             createRetryIntervalMillis: 100,
             propagateCreateError: false,
-        });
+        };
+        
+        pool = new Pool(poolConfig);
         
         console.log('Master Node: Initializing PostgreSQL connection...');
-        console.log('Connection String:', connectionString.replace(/password=[^&\s]+/, 'password=***'));
+        console.log('Host:', poolConfig.host);
+        console.log('Port:', poolConfig.port);
+        console.log('Database:', poolConfig.database);
+        console.log('User:', poolConfig.user);
         
         // Test connection with retry logic
         let retries = 5;
@@ -531,28 +540,49 @@ app.post('/query', async (req, res) => {
 // This endpoint is kept for backward compatibility but should use the proper schema
 app.post('/fragments', async (req, res) => {
     try {
-        const { segmentId, numFragment, bytes, contentHash, nodeId, fragmentAddress } = req.body;
-        
+        // Backwards-compatible: accept either (segmentId + numFragment + bytes + contentHash)
+        // or a storage-node confirmation containing fragmentId, bytes, nodeId, fragmentAddress
+        const { segmentId, numFragment, bytes, contentHash } = req.body;
+        const providedFragmentId = req.body.fragmentId;
+        const nodeId = req.body.nodeId || req.body.node_id;
+        const fragmentAddress = req.body.fragmentAddress || req.body.fragment_address;
+
+        // If client provided a fragmentId, assume this is a storage-node confirmation
+        if (providedFragmentId) {
+            const fragmentId = providedFragmentId;
+
+            // Insert fragment_location for the confirmed fragment write
+            if (nodeId && fragmentAddress) {
+                await query(`
+                    INSERT INTO fragment_location (fragment_id, node_id, fragment_address, bytes, status, stored_at)
+                    VALUES ($1, $2, $3, $4, 'ACTIVE', NOW())
+                `, [fragmentId, nodeId, fragmentAddress, bytes || 0]);
+            }
+
+            return res.json({ success: true, fragmentId });
+        }
+
+        // Fallback: caller didn't provide fragmentId — preserve legacy behavior
         if (!segmentId || numFragment === undefined || !bytes || !contentHash) {
             return res.status(400).json({ error: 'Missing required fields: segmentId, numFragment, bytes, contentHash' });
         }
-        
+
         const fragmentId = uuidv4();
-        
+
         // Insert into file_fragments table
         await query(`
-            INSERT INTO file_fragments (fragment_id, segment_id, num_fragment, bytes, content_hash)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO file_fragments (fragment_id, segment_id, num_fragment, bytes, content_hash, stored_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
         `, [fragmentId, segmentId, numFragment, bytes, contentHash]);
-        
-        // If nodeId and fragmentAddress provided, also insert into fragment_location
+
+        // If nodeId and fragmentAddress provided, also insert into fragment_location (legacy callers)
         if (nodeId && fragmentAddress) {
             await query(`
-                INSERT INTO fragment_location (fragment_id, node_id, fragment_address, bytes, status)
-                VALUES ($1, $2, $3, $4, 'ACTIVE')
+                INSERT INTO fragment_location (fragment_id, node_id, fragment_address, bytes, status, stored_at)
+                VALUES ($1, $2, $3, $4, 'ACTIVE', NOW())
             `, [fragmentId, nodeId, fragmentAddress, bytes]);
         }
-        
+
         res.json({ success: true, fragmentId });
     } catch (error) {
         console.error('Error storing fragment info:', error);
@@ -735,7 +765,7 @@ app.post('/query/batch', async (req, res) => {
                     results.push({
                         index: i,
                         success: true,
-                        data: serializeRowsForJSON(result.rows),
+                        data: result.rows,
                         rowCount: result.rowCount
                     });
                 } catch (error) {
@@ -808,12 +838,19 @@ app.post('/file-fragments', async (req, res) => {
         `, [segment_id, version_id, erasure_id || 'MEDIUM', 
             fragment_data.reduce((total, frag) => total + frag.bytes, 0), 'pending']);
         
-        // Get available storage nodes
+        // Get available storage nodes.
+        // Only consider nodes that have a recent heartbeat (healthy) and de-duplicate
+        // by hostname (use the most-recent registration per hostname). This avoids
+        // selecting nodes that were shut down but still have rows in the DB.
         const nodesResult = await query(`
-            SELECT NODE_ID, API_ENDPOINT, HOSTNAME 
-            FROM NODE 
-            WHERE NODE_ROLE = 'STORAGE' AND IS_ACTIVE = true 
-            ORDER BY random() 
+            SELECT node_id, api_endpoint, hostname FROM (
+                SELECT DISTINCT ON (hostname) node_id, api_endpoint, hostname, heartbeat_at
+                FROM node
+                WHERE node_role = 'STORAGE' AND is_active = true
+                ORDER BY hostname, heartbeat_at DESC
+            ) t
+            WHERE t.heartbeat_at > NOW() - INTERVAL '90 seconds'
+            ORDER BY random()
             LIMIT $1
         `, [fragment_data.length]);
         
@@ -833,19 +870,15 @@ app.post('/file-fragments', async (req, res) => {
             const node = nodesResult.rows[i];
             const fragmentId = uuidv4();
             
-            // Insert into FILE_FRAGMENTS
+            // Insert only FILE_FRAGMENTS here. Do NOT insert FRAGMENT_LOCATION yet;
+            // storage nodes will confirm the write and notify master with the
+            // final fragment address (logical object key). This avoids stale
+            // DB rows when storage writes fail or are delayed.
             await query(`
                 INSERT INTO FILE_FRAGMENTS (FRAGMENT_ID, SEGMENT_ID, NUM_FRAGMENT, BYTES, CONTENT_HASH, STORED_AT)
                 VALUES ($1, $2, $3, $4, $5, NOW())
             `, [fragmentId, segment_id, fragment.num_fragment, fragment.bytes, fragment.content_hash]);
-            
-            // Insert into FRAGMENT_LOCATION
-            const fragmentPath = `/data/storage_node_${node.hostname}/fragment_${fragmentId}.bin`;
-            await query(`
-                INSERT INTO FRAGMENT_LOCATION (FRAGMENT_ID, NODE_ID, FRAGMENT_ADDRESS, BYTES, STATUS, STORED_AT, LAST_CHECKED_AT)
-                VALUES ($1, $2, $3, $4, 'ACTIVE', NOW(), NOW())
-            `, [fragmentId, node.node_id, fragmentPath, fragment.bytes]);
-            
+
             distributedFragments.push({
                 fragmentId: fragmentId,
                 nodeId: node.node_id,

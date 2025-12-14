@@ -91,9 +91,9 @@ CREATE TABLE ERASURE_PROFILE(
 );
 
 INSERT INTO ERASURE_PROFILE (ERASURE_ID, k, m, bytes, NOTES) VALUES
-('LOW', 4, 2, 1024, 'Low redundancy'),
-('MEDIUM', 6, 3, 2048, 'Medium redundancy'),
-('HIGH', 8, 4, 4096, 'High redundancy');
+('LOW', 6, 1, 1024, 'Low redundancy'),
+('MEDIUM', 5, 2, 2048, 'Medium redundancy'),
+('HIGH', 4, 3, 4096, 'High redundancy');
 
 CREATE TABLE ACCOUNT_ERASURE (
     ACCOUNT_ID uuid PRIMARY KEY,

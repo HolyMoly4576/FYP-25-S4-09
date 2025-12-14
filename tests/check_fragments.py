@@ -12,8 +12,8 @@ def main():
         auth_response = requests.post(
             'http://localhost:8004/auth/login',
             json={
-                'username_or_email': 'testuser', 
-                'password': 'testpassword'
+                'username_or_email': 'alice', 
+                'password': 'password123'
             }
         )
         

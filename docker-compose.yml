@@ -198,65 +198,66 @@ services:
     volumes:
       - storage_node_7_data:/data
 
-  storage_node_8:
-    <<: *storage-node-template
-    container_name: storage_node_8
-    environment:
-      <<: *common-environment
-      NODE_HOSTNAME: storage_node_8
-      STORAGE_PATH: /data/storage_node_8
-    ports:
-      - "8107:3000"
-    volumes:
-      - storage_node_8_data:/data
 
-  storage_node_9:
-    <<: *storage-node-template
-    container_name: storage_node_9
-    environment:
-      <<: *common-environment
-      NODE_HOSTNAME: storage_node_9
-      STORAGE_PATH: /data/storage_node_9
-    ports:
-      - "8108:3000"
-    volumes:
-      - storage_node_9_data:/data
+  # storage_node_8:
+  #   <<: *storage-node-template
+  #   container_name: storage_node_8
+  #   environment:
+  #     <<: *common-environment
+  #     NODE_HOSTNAME: storage_node_8
+  #     STORAGE_PATH: /data/storage_node_8
+  #   ports:
+  #     - "8107:3000"
+  #   volumes:
+  #     - storage_node_8_data:/data
 
-  storage_node_10:
-    <<: *storage-node-template
-    container_name: storage_node_10
-    environment:
-      <<: *common-environment
-      NODE_HOSTNAME: storage_node_10
-      STORAGE_PATH: /data/storage_node_10
-    ports:
-      - "8109:3000"
-    volumes:
-      - storage_node_10_data:/data
+  # storage_node_9:
+  #   <<: *storage-node-template
+  #   container_name: storage_node_9
+  #   environment:
+  #     <<: *common-environment
+  #     NODE_HOSTNAME: storage_node_9
+  #     STORAGE_PATH: /data/storage_node_9
+  #   ports:
+  #     - "8108:3000"
+  #   volumes:
+  #     - storage_node_9_data:/data
 
-  storage_node_11:
-    <<: *storage-node-template
-    container_name: storage_node_11
-    environment:
-      <<: *common-environment
-      NODE_HOSTNAME: storage_node_11
-      STORAGE_PATH: /data/storage_node_11
-    ports:
-      - "8110:3000"
-    volumes:
-      - storage_node_11_data:/data
+  # storage_node_10:
+  #   <<: *storage-node-template
+  #   container_name: storage_node_10
+  #   environment:
+  #     <<: *common-environment
+  #     NODE_HOSTNAME: storage_node_10
+  #     STORAGE_PATH: /data/storage_node_10
+  #   ports:
+  #     - "8109:3000"
+  #   volumes:
+  #     - storage_node_10_data:/data
 
-  storage_node_12:
-    <<: *storage-node-template
-    container_name: storage_node_12
-    environment:
-      <<: *common-environment
-      NODE_HOSTNAME: storage_node_12
-      STORAGE_PATH: /data/storage_node_12
-    ports:
-      - "8111:3000"
-    volumes:
-      - storage_node_12_data:/data
+  # storage_node_11:
+  #   <<: *storage-node-template
+  #   container_name: storage_node_11
+  #   environment:
+  #     <<: *common-environment
+  #     NODE_HOSTNAME: storage_node_11
+  #     STORAGE_PATH: /data/storage_node_11
+  #   ports:
+  #     - "8110:3000"
+  #   volumes:
+  #     - storage_node_11_data:/data
+
+  # storage_node_12:
+  #   <<: *storage-node-template
+  #   container_name: storage_node_12
+  #   environment:
+  #     <<: *common-environment
+  #     NODE_HOSTNAME: storage_node_12
+  #     STORAGE_PATH: /data/storage_node_12
+  #   ports:
+  #     - "8111:3000"
+  #   volumes:
+  #     - storage_node_12_data:/data
 
   # Test Infrastructure
   test_postgres_db:
@@ -296,8 +297,8 @@ volumes:
   storage_node_5_data:
   storage_node_6_data:
   storage_node_7_data:
-  storage_node_8_data:
-  storage_node_9_data:
-  storage_node_10_data:
-  storage_node_11_data:
-  storage_node_12_data:
+  # storage_node_8_data:
+  # storage_node_9_data:
+  # storage_node_10_data:
+  # storage_node_11_data:
+  # storage_node_12_data:

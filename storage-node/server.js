@@ -3,7 +3,30 @@ const axios = require('axios');
 const {v4: uuidv4} = require('uuid');
 const fs = require('fs').promises;
 const path = require('path');
+const os = require('os');
 const app = express();
+
+// Get container's IP address on the overlay network
+function getContainerIP() {
+    const interfaces = os.networkInterfaces();
+    
+    // Look for the overlay network interface
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // Skip internal (loopback) and IPv6 addresses
+            if (!iface.internal && iface.family === 'IPv4') {
+                // Skip Docker bridge networks (172.17.x.x) - these are not accessible from other containers
+                if (!iface.address.startsWith('172.17.')) {
+                    console.log(`Found overlay network IP: ${iface.address} on interface ${name}`);
+                    return iface.address;
+                }
+            }
+        }
+    }
+    
+    console.warn('Could not find overlay network IP, falling back to hostname');
+    return null; // Fallback to hostname if IP not found
+}
 
 // Configure Express to handle large payloads (up to 200MB)
 app.use(express.json({ limit: '200mb', parameterLimit: 1000000 }));
@@ -14,7 +37,9 @@ app.use((req, res, next) => {
     req.setTimeout(600000); // 10 minutes
     res.setTimeout(600000); // 10 minutes
     next();
-});// Master node connection instead of direct database
+});
+
+// Master node connection instead of direct database
 const MASTER_NODE_HOST = process.env.MASTER_NODE_HOST || 'master_node';
 const MASTER_NODE_PORT = process.env.MASTER_NODE_PORT || 3000;
 const MASTER_NODE_URL = `http://${MASTER_NODE_HOST}:${MASTER_NODE_PORT}`;
@@ -22,13 +47,25 @@ const MASTER_NODE_URL = `http://${MASTER_NODE_HOST}:${MASTER_NODE_PORT}`;
 const NODE_ID = uuidv4();
 const NODE_PORT = process.env.NODE_PORT || 3000;
 const NODE_ROLE = process.env.NODE_ROLE || 'STORAGE';
-const NODE_HOSTNAME = process.env.NODE_HOSTNAME || `storage-node-${NODE_ID.slice(0, 8)}`;
-const STORAGE_PATH = process.env.STORAGE_PATH || '/storage';
+
+// Get container IP for registration - THIS IS THE KEY FIX!
+const CONTAINER_IP = getContainerIP();
+const NODE_HOSTNAME = CONTAINER_IP || process.env.NODE_HOSTNAME || `storage-node-${NODE_ID.slice(0, 8)}`;
+
+// Use a logical objects folder for fragment objects. This makes addresses
+// portable and easier to migrate to object storage later.
+const STORAGE_PATH = process.env.STORAGE_PATH || '/data/objects';
 const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL) || 10000;
 
 async function registerWithMaster(){
     try {
+        // Use IP address for API endpoint instead of hostname!
         const apiEndpoint = `http://${NODE_HOSTNAME}:${NODE_PORT}`;
+        
+        console.log(`Registering with master node...`);
+        console.log(`API Endpoint: ${apiEndpoint}`);
+        console.log(`Node ID: ${NODE_ID}`);
+        
         const response = await axios.post(`${MASTER_NODE_URL}/register-node`, {
             nodeId: NODE_ID,
             apiEndpoint: apiEndpoint,
@@ -37,8 +74,8 @@ async function registerWithMaster(){
         });
         
         if (response.data.success) {
-            console.log(`Storage Node ${NODE_ID} registered with master node.`);
-            console.log('Hostname:', NODE_HOSTNAME);
+            console.log(`✅ Storage Node ${NODE_ID} registered with master node.`);
+            console.log('Hostname/IP:', NODE_HOSTNAME);
             console.log('Role:', NODE_ROLE);
             console.log('Master Node:', MASTER_NODE_URL);
         } else {
@@ -73,12 +110,7 @@ async function heartbeat(){
 
 async function updateCapacity(){
     try {
-        const files = await fs.readdir(STORAGE_PATH);
-        let usedBytes = 0;
-        for (const file of files){
-            const stats = await fs.stat(path.join(STORAGE_PATH, file));
-            usedBytes += stats.size;
-        }
+        const usedBytes = await getDirectorySize(STORAGE_PATH);
         const totalBytes = 100 * 1024 * 1024 * 1024; // 100GB default
         const availableBytes = totalBytes - usedBytes;
 
@@ -118,18 +150,31 @@ app.post('/fragments', async (req, res) => {
             return res.status(400).json({ error: 'Missing fragmentId or data' });
         }
 
-        // Store fragment locally
-        const fragmentPath = path.join(STORAGE_PATH, `${fragmentId}.bin`);
-        await fs.writeFile(fragmentPath, Buffer.from(data, 'base64'));
+        // Decide object key — keep it deterministic so we can locate fragments later
+        const fileId = req.body.fileId || 'unknown';
+        const fragmentOrder = req.body.fragmentOrder !== undefined ? req.body.fragmentOrder : '0';
+        const key = path.join(fileId.toString(), `${fragmentOrder}_${fragmentId}.bin`);
+        const objectPath = path.join(STORAGE_PATH, key);
 
-        // Notify master node about fragment storage
+        // Ensure parent directory exists
+        await fs.mkdir(path.dirname(objectPath), { recursive: true });
+
+        // Store fragment locally as an "object"
+        await fs.writeFile(objectPath, Buffer.from(data, 'base64'));
+
+        console.log(`✅ Fragment ${fragmentId} stored at ${objectPath}`);
+
+        // Notify master node about fragment storage with logical object address
+        const fragmentAddress = `objects/${key}`; // logical address; master stores this
         try {
             await axios.post(`${MASTER_NODE_URL}/fragments`, {
-                fileId: req.body.fileId || 'unknown',
+                fragmentId: fragmentId,
                 nodeId: NODE_ID,
-                fragmentOrder: req.body.fragmentOrder || 0,
-                fragmentSize: bytes || data.length,
-                fragmentHash: contentHash || 'unknown'
+                fragmentAddress: fragmentAddress,
+                bytes: bytes || Buffer.from(data, 'base64').length,
+                contentHash: contentHash || 'unknown',
+                fileId: fileId,
+                fragmentOrder: fragmentOrder
             });
         } catch (error) {
             console.error('Error notifying master node:', error.message);
@@ -141,7 +186,8 @@ app.post('/fragments', async (req, res) => {
             success: true,
             fragmentId: fragmentId,
             nodeId: NODE_ID,
-            path: fragmentPath
+            path: objectPath,
+            logicalAddress: fragmentAddress
         });
     } catch (error) {
         console.error('Error storing fragment:', error);
@@ -150,31 +196,47 @@ app.post('/fragments', async (req, res) => {
 });
 
 // List all fragments stored on this node
-app.get('/fragments', async (req, res) => {
+// Recursively list fragment files under STORAGE_PATH
+async function listFragmentFiles(dir) {
+    const results = [];
     try {
-        const files = await fs.readdir(STORAGE_PATH);
-        const fragments = [];
-        
-        for (const file of files) {
-            if (file.endsWith('.bin')) {
-                const fragmentId = file.replace('.bin', '');
-                const fragmentPath = path.join(STORAGE_PATH, file);
-                
-                try {
-                    const stats = await fs.stat(fragmentPath);
-                    fragments.push({
-                        fragmentId: fragmentId,
-                        bytes: stats.size,
-                        storedAt: stats.mtime.toISOString(),
-                        path: fragmentPath
-                    });
-                } catch (error) {
-                    console.error(`Error getting stats for fragment ${fragmentId}:`, error.message);
-                    // Continue with other fragments
-                }
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                const sub = await listFragmentFiles(fullPath);
+                results.push(...sub);
+            } else if (entry.isFile() && entry.name.endsWith('.bin')) {
+                results.push(fullPath);
             }
         }
-        
+    } catch (err) {
+        // ignore directory not found
+    }
+    return results;
+}
+
+app.get('/fragments', async (req, res) => {
+    try {
+        const files = await listFragmentFiles(STORAGE_PATH);
+        const fragments = [];
+
+        for (const fragmentPath of files) {
+            const file = path.basename(fragmentPath);
+            const fragmentId = file.replace('.bin', '').split('_').slice(-1)[0];
+            try {
+                const stats = await fs.stat(fragmentPath);
+                fragments.push({
+                    fragmentId: fragmentId,
+                    bytes: stats.size,
+                    storedAt: stats.mtime.toISOString(),
+                    path: fragmentPath
+                });
+            } catch (error) {
+                console.error(`Error getting stats for fragment ${fragmentId}:`, error.message);
+            }
+        }
+
         res.json({
             success: true,
             nodeId: NODE_ID,
@@ -190,22 +252,30 @@ app.get('/fragments', async (req, res) => {
 app.get('/fragments/:fragmentId', async (req, res) => {
     try {
         const { fragmentId } = req.params;
-        const fragmentPath = path.join(STORAGE_PATH, `${fragmentId}.bin`);
-        
-        try {
-            const data = await fs.readFile(fragmentPath);
-            res.json({
-                success: true,
-                fragmentId: fragmentId,
-                data: data.toString('base64'),
-                bytes: data.length
-            });
-        } catch (error) {
-            if (error.code === 'ENOENT') {
-                return res.status(404).json({ error: 'Fragment not found' });
+
+        // Search recursively for the fragment file (it may be stored under fileId/<order>_<fragmentId>.bin)
+        const files = await listFragmentFiles(STORAGE_PATH);
+        let found = null;
+        for (const f of files) {
+            const name = path.basename(f);
+            if (name === `${fragmentId}.bin` || name.endsWith(`_${fragmentId}.bin`)) {
+                found = f;
+                break;
             }
-            throw error;
         }
+
+        if (!found) {
+            return res.status(404).json({ error: 'Fragment not found' });
+        }
+
+        const data = await fs.readFile(found);
+        res.json({
+            success: true,
+            fragmentId: fragmentId,
+            data: data.toString('base64'),
+            bytes: data.length,
+            path: found
+        });
     } catch (error) {
         console.error('Error retrieving fragment:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -215,28 +285,34 @@ app.get('/fragments/:fragmentId', async (req, res) => {
 app.delete('/fragments/:fragmentId', async (req, res) => {
     try {
         const { fragmentId } = req.params;
-        const fragmentPath = path.join(STORAGE_PATH, `${fragmentId}.bin`);
-        
+
+        const files = await listFragmentFiles(STORAGE_PATH);
+        let found = null;
+        for (const f of files) {
+            const name = path.basename(f);
+            if (name === `${fragmentId}.bin` || name.endsWith(`_${fragmentId}.bin`)) {
+                found = f;
+                break;
+            }
+        }
+
+        if (!found) {
+            return res.status(404).json({ error: 'Fragment not found' });
+        }
+
         try {
-            await fs.unlink(fragmentPath);
-            
+            await fs.unlink(found);
+
             // Notify master node about fragment deletion
             try {
                 await axios.delete(`${MASTER_NODE_URL}/fragments/${fragmentId}`);
             } catch (error) {
                 console.error('Error notifying master node:', error.message);
-                // Continue anyway - fragment is deleted locally
             }
-            
+
             await updateCapacity();
-            res.json({
-                success: true,
-                fragmentId: fragmentId
-            });
+            res.json({ success: true, fragmentId: fragmentId });
         } catch (error) {
-            if (error.code === 'ENOENT') {
-                return res.status(404).json({ error: 'Fragment not found' });
-            }
             throw error;
         }
     } catch (error) {
@@ -247,15 +323,16 @@ app.delete('/fragments/:fragmentId', async (req, res) => {
 
 app.get('/status', async (req, res) => {
     try {
-        // Get storage directory size
-        const stats = await fs.stat(STORAGE_PATH);
+        const storageUsed = await getDirectorySize(STORAGE_PATH);
+        const totalCapacity = 100 * 1024 * 1024 * 1024; // 100GB
+        
         const storageInfo = {
             nodeId: NODE_ID,
             nodeType: 'storage',
             status: 'active',
-            storageUsed: await getDirectorySize(STORAGE_PATH),
-            capacity: TOTAL_CAPACITY,
-            address: `http://${NODE_HOST}:${NODE_PORT}`,
+            storageUsed: storageUsed,
+            capacity: totalCapacity,
+            address: `http://${NODE_HOSTNAME}:${NODE_PORT}`,
             lastUpdated: new Date().toISOString()
         };
         
@@ -276,10 +353,12 @@ async function getDirectorySize(dirPath) {
             const stats = await fs.stat(filePath);
             if (stats.isFile()) {
                 size += stats.size;
+            } else if (stats.isDirectory()) {
+                size += await getDirectorySize(filePath);
             }
         }
     } catch (error) {
-        console.error('Error calculating directory size:', error);
+        // Directory might not exist yet
     }
     return size;
 }
@@ -297,6 +376,16 @@ process.on('SIGTERM', async () => {
 });
 
 async function startServer(){
+    console.log('=================================');
+    console.log('🚀 Storage Node Starting');
+    console.log('=================================');
+    console.log(`Node ID: ${NODE_ID}`);
+    console.log(`Container IP: ${CONTAINER_IP || 'Not found'}`);
+    console.log(`Hostname: ${NODE_HOSTNAME}`);
+    console.log(`Port: ${NODE_PORT}`);
+    console.log(`Master Node: ${MASTER_NODE_URL}`);
+    console.log('=================================');
+    
     await registerWithMaster();
     
     // Ensure storage directory exists
@@ -310,7 +399,7 @@ async function startServer(){
     setInterval(heartbeat, HEARTBEAT_INTERVAL);
     setInterval(updateCapacity, HEARTBEAT_INTERVAL * 6);
     app.listen(NODE_PORT, '0.0.0.0', () => {
-        console.log(`Storage Node server running on port ${NODE_PORT}`);
+        console.log(`✅ Storage Node server running on ${NODE_HOSTNAME}:${NODE_PORT}`);
         console.log(`Connected to Master Node: ${MASTER_NODE_URL}`);
     });
 }
