@@ -33,6 +33,7 @@ origins = [
     "http://127.0.0.1:3000",
     "http://localhost:8081",
     "http://127.0.0.1:8081",
+    "https://fyp25s409-shard.vercel.app/"
     "*"  # Allow all origins for development
 ]
 
