@@ -34,3 +34,5 @@ export async function getRoles() {
     // Return profile_types only
     return result.profiles.map(profile => profile.profile_type);
 }
+
+// Just a test
