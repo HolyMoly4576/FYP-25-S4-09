@@ -77,3 +77,9 @@
     padding: 1% 1.5%;
   }
 }
+
+a:hover,
+a:focus,
+a:visited {
+  text-decoration: none;
+}

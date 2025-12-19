@@ -26,3 +26,24 @@
 .public-share-card p {
   margin: 4px 0;
 }
+
+@media (max-width: 768px) {
+  .public-share-container {
+    padding: 16px;           /* avoid card touching screen edges */
+  }
+
+  .public-share-card {
+    padding: 16px 18px;      /* slightly tighter padding on small screens */
+    max-width: 100%;         /* let it use full width (minus container padding) */
+    border-radius: 8px;
+  }
+
+  .public-share-card h2 {
+    font-size: 18px;
+  }
+
+  .public-share-card p {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+}

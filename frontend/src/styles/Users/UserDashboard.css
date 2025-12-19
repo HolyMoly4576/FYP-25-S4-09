@@ -263,3 +263,39 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+/* Mobile: stack toolbar items vertically */
+@media (max-width: 768px) {
+  .dashboard-toolbar {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+  }
+
+  .toolbar-center {
+    order: 1;
+  }
+
+  .toolbar-left {
+    order: 2;
+  }
+
+  .toolbar-right {
+    order: 3;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-action-btn,
+  .toolbar-action-btn-1 {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .dashboard-table-wrapper {
+    max-height: none;
+  }
+
+  .dashboard-table {
+    min-width: 600px; 
+  }
+}

@@ -272,3 +272,74 @@
     min-width: 900px;
   }
 }
+
+/* Tablet & down: already have 900px breakpoint; keep it */
+@media (max-width: 900px) {
+  .activity-history {
+    padding: 1rem;
+  }
+
+  .activity-history-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .activity-history-table {
+    min-width: 900px;
+  }
+}
+
+/* Mobile: tighter spacing and stacked filters */
+@media (max-width: 640px) {
+  .activity-history {
+    padding: 0.75rem;
+    border-radius: 0; /* optional: edge‑to‑edge on mobile */
+  }
+
+  .activity-history-title {
+    font-size: 1.25rem;
+  }
+
+  .activity-history-subtitle {
+    font-size: 0.8rem;
+  }
+
+  .activity-history-filters {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.75rem 0.75rem;
+    gap: 0.75rem;
+  }
+
+  .filter-group input {
+    width: 100%;
+    min-width: 0; /* allow it to shrink on small screens */
+  }
+
+  .filter-buttons {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    flex: 1 1 48%;
+    text-align: center;
+  }
+
+  .activity-history-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .activity-history-table-wrapper {
+    max-height: none; /* let it grow; scroll page instead of inner box */
+  }
+
+  .activity-history-table {
+    min-width: 700px; /* still forces horizontal scroll on very small screens */
+  }
+
+  .details-pre {
+    max-height: 160px; /* a bit more room for logs on mobile */
+  }
+}
