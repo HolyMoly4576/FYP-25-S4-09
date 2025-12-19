@@ -1,0 +1,15 @@
+How to update the Swarm manager images
+
+- FastApi
+1.) cd ..\FYP-25-S4-09
+2.) docker build --no-cache -t (Your Username)/fastapi-backend:latest .
+3.) docker push (Your Username)/fastapi-backend:latest
+4.) Check the repo on docker if updated
+5.) SSH into swarm manager
+6.) docker service update --force shard_fastapi
+7.) docker stack rm shard
+8.) docker service ls (Make sure all running first)
+9.) docker service logs -f shard_fastapi (Check if any errors happen)
+10.) Check the routes if they are in https://shardfyp.myddns.me/docs#/
+Done
+
