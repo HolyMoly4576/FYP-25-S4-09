@@ -17,6 +17,7 @@ from app.routes.download_files import router as download_files_router
 from app.routes.search_folders_and_files import router as search_router
 from app.routes.file_sharing import router as file_sharing_router
 from app.routes.recycle_bin import router as recycle_bin_router
+from app.routes.upload_folders import router as upload_folders_router
 
 # Get maximum request size from environment variable (default 200MB)
 MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", "209715200"))  # 200MB in bytes
@@ -62,6 +63,7 @@ app.include_router(download_files_router)
 app.include_router(search_router)
 app.include_router(file_sharing_router)
 app.include_router(recycle_bin_router)
+app.include_router(upload_folders_router)
 
 # Health check
 @app.get("/healthz")

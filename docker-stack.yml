@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Master Node - Coordinates the distributed storage system
+  # Master Node
   master_node:
     image: aiess/master-node:latest
     environment:
@@ -10,12 +10,12 @@ services:
       NODE_PORT: 3000
       HEARTBEAT_INTERVAL: 30000
       STORAGE_PATH: /data/master_node
-      # Google Cloud SQL PostgreSQL Connection
-      POSTGRES_HOST: <YOUR_CLOUD_SQL_IP>
+      # Simplified PostgreSQL Connection
+      POSTGRES_HOST: 34.143.181.179
       POSTGRES_PORT: 5432
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "<YOUR_DB_PASSWORD>"
-      POSTGRES_DB: <YOUR_DB_NAME>
+      POSTGRES_PASSWORD: "P2s|0muoOkIfVH/j"
+      POSTGRES_DB: fyp-storage
       POSTGRES_MAX_CONNECTIONS: 25
       POSTGRES_MIN_CONNECTIONS: 5
       POSTGRES_SSL: "true"
@@ -37,14 +37,15 @@ services:
         delay: 10s
         max_attempts: 5
 
-  # FastAPI Application - REST API for file operations
+  # FastAPI Application
   fastapi:
     image: aiess/fastapi-backend:latest
     environment:
       # Google Cloud SQL PostgreSQL Connection
-      DATABASE_URL: "postgresql://postgres:<YOUR_DB_PASSWORD>@<YOUR_CLOUD_SQL_IP>:5432/<YOUR_DB_NAME>?sslmode=require"
+      DATABASE_URL: "postgresql://postgres:P2s|0muoOkIfVH/j@34.143.181.179:5432/fyp-storage?sslmode=require"
       MASTER_NODE_URL: http://master_node:3000
-      JWT_SECRET_KEY: <YOUR_JWT_SECRET_KEY>
+      FASTAPI_INTERNAL_URL: http://fastapi:8000
+      JWT_SECRET_KEY: your-secret-key-here-change-in-production-very-long-and-secure
       JWT_ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
       ENVIRONMENT: production
@@ -65,8 +66,7 @@ services:
         parallelism: 1
         delay: 10s
 
-  # Storage Nodes - Store erasure-coded file fragments
-  # 7 replicas distributed across worker nodes
+  # Storage Nodes (7 replicas distributed across worker nodes)
   storage_node:
     image: aiess/storage-node:latest
     environment:
@@ -90,7 +90,6 @@ services:
         max_attempts: 5
 
 networks:
-  # Overlay network for multi-host communication
   storage_network:
     driver: overlay
     attachable: true
