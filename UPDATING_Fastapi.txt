@@ -6,7 +6,7 @@ How to update the Swarm manager images
 3.) docker push (Your Username)/fastapi-backend:latest
 4.) Check the repo on docker if updated
 5.) SSH into swarm manager
-6.) docker service update --force shard_fastapi
+6.) docker service update --image (Your Username)/fastapi-backend:latest --force shard_fastapi
 7.) docker stack rm shard
 8.) docker stack deploy -c docker-stack.yml shard
 9.) docker service ls (Make sure all running first)
