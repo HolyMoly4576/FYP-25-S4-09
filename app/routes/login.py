@@ -45,22 +45,29 @@ class UserResponse(BaseModel):
 
 
 def get_account_by_username_or_email_master_node(master_db: MasterNodeDB, username_or_email: str) -> Optional[dict]:
-	"""Get account by username or email from master node database (PostgreSQL)."""
-	# Try username first
-	query_username = "SELECT account_id, username, email, password_hash, account_type, created_at FROM account WHERE username = $1"
-	result = master_db.select(query_username, [username_or_email])
-	
-	if result:
-		return result[0]
-	
-	# If no result by username, try email
-	query_email = "SELECT account_id, username, email, password_hash, account_type, created_at FROM account WHERE email = $1"
-	result = master_db.select(query_email, [username_or_email])
-	
-	if result:
-		return result[0]
-		
-	return None
+    """Get account by username or email from master node database (PostgreSQL)."""
+
+    # Try username first
+    query_username = """
+        SELECT account_id, username, email, password_hash, account_type, created_at
+        FROM account
+        WHERE username = $1
+    """
+    result = master_db.select(query_username, [username_or_email])
+    if result:
+        return result[0]
+
+    # If no result by username, try email
+    query_email = """
+        SELECT account_id, username, email, password_hash, account_type, created_at
+        FROM account
+        WHERE email = $1
+    """
+    result = master_db.select(query_email, [username_or_email])
+    if result:
+        return result[0]
+
+    return None
 
 
 @router.post("/login", response_model=TokenResponse)
